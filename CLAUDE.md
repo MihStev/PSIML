@@ -408,8 +408,23 @@ Podela rada dan 1: Mihajlo teorijska strana, Dawidzard infrastruktura/tehnički 
   tajminga, ne BAIR skale. **VAŽNA OGRADA: ovo je BATCH=1.** Repo-ov onboarding skill izričito kaže
   "bs < 8 nije dovoljno za kontrolabilnost" — pravi trening mora ići sa batch≥8, vrijeme/memorija
   će se promijeniti (vjerovatno ne linearno, GPU se bolje iskoristi pri batch-ovanju, vidi isti
-  efekat kod VAE-enkodiranja). **Sledeći korak prije javljanja mentoru: ponoviti benchmark sa
-  batch≥8 za pouzdan konačan broj.**
+  efekat kod VAE-enkodiranja).
+- [ZAVRŠENO] **Rank sweep na batch=8 (KONAČAN broj za Nedka).** Ponovljen isti benchmark za
+  rank ∈ {8, 16, 64}, batch=8, 5 koraka svaki (`real_training_benchmark.py --rank R --batch_size 8`):
+
+  | rank | trenable params | s/korak (steady) | peak mem | 2.5k iter |
+  |------|-----------------|-------------------|----------|-----------|
+  | 8    | 9.46M           | 1.28s             | 15.35GB  | 0.89h     |
+  | 16   | 18.92M          | 1.29s             | 15.40GB  | 0.90h     |
+  | 64   | 75.69M          | 1.30s             | 15.75GB  | 0.91h     |
+
+  **Nalaz: rank ne utiče praktično ni na brzinu ni na memoriju na BAIR skali** (razlika 8→64 je
+  0.3GB / 0.02s) — LoRA matrice su premale naspram ostatka modela da bi se osjetilo. Znači izbor
+  ranka (Mihajlo/mentori pominjali 8 ili 16, ranije korišćeni 64 je bio nasleđen iz VideoX-Fun
+  primjera, ne stvarna odluka) treba da bude o kvalitetu/overfitting riziku, NE o trošku — trošak
+  je identičan. **Svi rankovi projektuju ~1h za 2.5k iteracija — konačan, pouzdan odgovor na
+  Nedkovu procjenu od 20-30h**, potvrđen na pravim podacima i realnom batch size-u (uslov "bs≥8"
+  iz onboarding skilla ispoštovan).
 - [U TOKU] LoRA fine-tuning implementacija (condition-injection POC gotov, VideoX-Fun referenca kao
   osnova za training loop, vidi sekciju gore) — glavni tehnički cilj
 - [NEODLUČENO] Kako se akcija ubacuje po AR bloku (BAIR daje 30 akcija/epizodu, injection mehanizam
