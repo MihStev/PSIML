@@ -820,6 +820,50 @@ manje memorije. Provjereno u kodu:
 **Plan:** (1) DMD LoRA na 64×64 — jeftino, čist odgovor na Nedkovo otvoreno pitanje; nestabilnost je
 VALIDAN nalaz, ne neuspjeh. (2) Rezolucija odvojeno, preko `robonet_sample_128` → `robonet_128`.
 
+## EVALUACIONA SKRIPTA (`lora_action/evaluate.py`) — napisana, smoke test PROŠAO (12.08, 21:45)
+
+**Dizajn — dva režima, jer PSNR/SSIM imaju smisla samo u prvom:**
+- **Režim A** (prava akcija epizode, ground truth POSTOJI): PSNR, SSIM, FID. FID uz eksplicitnu
+  ogradu — pri ovom broju uzoraka koristi se samo kao RELATIVNA mjera između checkpointa.
+- **Režim B** (isti šum, `dim0` prisiljen na ±0.07, ground truth NE postoji po konstrukciji):
+  divergencija + tačnost smjera. Smjer se mjeri u dvije varijante: *relativna* (da li "desno"
+  završi desnije od "lijevo" — robusno, ruka ima fizičke granice) i *apsolutna* (svaka varijanta
+  mora ići u svom smjeru — strože).
+
+**Ključne odluke:** test split (256 neviđenih epizoda, ne trening); **isti šum za sve varijante**
+(inače poređenje nije pošteno); bazni model se učitava JEDNOM a checkpointi se mijenjaju u mjestu
+(8 checkpointa = 5 min učitavanja umjesto 40); zadržan guard za akcije izvan distribucije.
+
+**SMOKE TEST (step_1500, 8 scena test splita, 12 koraka):**
+
+| metrika | vrijednost |
+|---------|-----------|
+| PSNR | 17.41 |
+| SSIM | 0.7272 |
+| divergencija (generisano) | **43.84** |
+| divergencija (kontekst) | **0.00** ← ugrađena kontrola, tačno nula |
+| smjer relativno | **1.000** (8/8) |
+| smjer apsolutno | **0.938** (15/16) |
+
+- `ctx = 0.00` je dokaz da mjerenje nije pokvareno (ranijih 1-2 jedinice bile su mp4 kompresija;
+  ovdje se radi nad sirovim nizovima).
+- Divergencija 43.84 je VIŠA od ranijih 34.16, i to na NEVIĐENIM scenama.
+- **Smjer 8/8 relativno na neviđenim podacima = semantička kontrola, ne samo "akcija mijenja izlaz".**
+- Ograda: 8 scena, 12 koraka — treba pun run za statističku težinu (planirano za dan 3).
+
+## VAL LOSS — nemojte ga čitati po tački (naučeno na svojoj koži)
+
+```
+1000: 0.1194 | 1500: 0.1171 | 2000: 0.1195 | 2500: 0.1176 | 3000: 0.1079 | 3500: 0.1135
+```
+Val **osciluje u pojasu 0.108-0.120 od koraka ~1000**, šum ±0.006. Tokom sesije sam dvaput donio
+pogrešan zaključak: nazvao plato na 2500, povukao ga na 3000 kad je val pao, pa se na 3500 vratio.
+**Obje reakcije su bile na šum.** Trening loss uredno pada (0.1409 → 0.1115), što znači da sve
+poslije ~1500 ide u pamćenje, ne generalizaciju.
+
+**Zaključak: odluke se ne donose na osnovu val loss-a.** On mjeri rekonstrukciju; nas zanima
+KONTROLA. Kriva `kontrolabilnost vs. koraci` iz `evaluate.py` je pouzdan kriterijum i nju čekamo.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
