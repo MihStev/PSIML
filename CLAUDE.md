@@ -769,6 +769,57 @@ radio 64 **pa onda** 128 u ISTOM procesu. Trening na jednoj rezoluciji nikad ne 
 - NE raditi prije nego što se izmjeri kontrolabilnost ovog treninga — inače se ne zna šta je čemu
   doprinijelo.
 
+## ISTRAŽIVANJE DATASETA ZA VEĆU REZOLUCIJU (12.08, veče) — zaključeno
+
+**Pitanje:** postoji li BAIR u većoj rezoluciji od 64×64?
+
+**Odgovor: originalna BAIR u punoj rezoluciji (512×640) NIJE javno objavljena.** Dokazano:
+- `rail.eecs.berkeley.edu/datasets/` sadrži SAMO `bair_robot_pushing_dataset_v0.tar` i njegovu
+  `.tar.gz` verziju. Ništa drugo, nigdje na serveru.
+- `Content-Length` tog tar-a = **32,274,964,480 bajta — bajt u bajt isto kao naš lokalni**. Link sa
+  Berkeley stranice vodi na fajl koji već imamo.
+- Aritmetika sadržaja tar-a potvrđuje 64×64: 189,852,160 B/fajl ÷ 256 trajektorija ÷ 60 slika
+  (30 frejmova × main+aux1) = **12,360 B po slici**, a 64×64×3 = 12,288 B. Sirovi uint8, ne
+  kompresovano. Da je 512×640, slika bi bila 983 KB.
+- TFDS issue #2157 traži baš tu originalnu rezoluciju i stoji NERJEŠEN.
+
+**Rješenje: RoboNet je nasljednik istih podataka u 128×128.** RoboNet sadrži baš te BAIR Sawyer
+pushing podatke (isti robot, ista laboratorija; vlasnik fajlova u našem tar-u je `frederik` =
+Frederik Ebert, koautor RoboNet-a). Dostupan kroz TFDS koji naša cijev već koristi.
+
+| config | download | na disku | epizoda |
+|--------|----------|----------|---------|
+| `robonet_sample_128` | **120 MB** | 639 MB | 700 |
+| `robonet_128` | **36.2 GB** | 144.9 GB | **162,417** |
+| (naš BAIR 64×64) | 31 GB | 20.8 GB | 43,264 |
+
+→ 3.75x više epizoda I 4x rezolucija, za isti red veličine preuzimanja kao BAIR.
+→ **Sample verzija (120 MB) omogućava test cijevi za ~10 min prije obavezivanja.**
+→ Izmjene koda: RoboNet akcije su **5-dim** (ne 4) → ActionEncoder ulaz 20 umjesto 16; video je
+  promjenljive dužine; multi-robot (raznovrsniji, teži).
+
+**Odbačene alternative:** Bridge `demos_8_17.zip` = **441 GB** (nemoguće kroz ovaj proxy);
+Bridge `scripted_6_18.zip` = 32.5 GB, 640×480, ali novi format + drugi prostor akcija = nova cijev.
+Upsampling BAIR-a 64→256 = ne dodaje informaciju (zamućenost je upečena).
+
+**Prostor nije problem:** `/data` (Lustre) ima **22 TB slobodno** od 123 TB. Ranija bojazan
+neosnovana.
+
+## DMD ("dvije muhe" ideja) — premisa o manjoj memoriji NE STOJI
+
+Razmatrano: raditi DMD (distilovan model) + veću rezoluciju odjednom, uz pretpostavku da DMD troši
+manje memorije. Provjereno u kodu:
+- `Wan21/model/dmd.py` drži **TRI kopije transformera**: `self.generator`, `self.fake_score`,
+  `self.real_score` → pravi DMD trening je ~3x SKUPLJI po memoriji, ne jeftiniji.
+- Ako se radi samo LoRA na DMD *checkpointu* našim postojećim flow-matching gubitkom → memorija je
+  ISTA kao sad, ne manja. I tu je Nedkova zamjerka: distilovan model je učen da PRESKAČE korake, pa
+  bi ga trening na pravi flow djelimično VRAĆAO unazad (otud "nisam siguran da će biti stabilan").
+- **Eksperimentalna higijena:** rezolucija i DMD su nezavisne ose. Mijenjati obje odjednom znači da
+  se pri lošem rezultatu ne zna šta je krivo. Razdvojiti.
+
+**Plan:** (1) DMD LoRA na 64×64 — jeftino, čist odgovor na Nedkovo otvoreno pitanje; nestabilnost je
+VALIDAN nalaz, ne neuspjeh. (2) Rezolucija odvojeno, preko `robonet_sample_128` → `robonet_128`.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
