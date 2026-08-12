@@ -130,6 +130,16 @@ else:
 pipeline.generator.to(device=gpu)
 pipeline.vae.to(device=gpu)
 
+# [MEM] Minimal instrumentation only — does not alter inference behavior.
+# Baseline snapshot right after full model load (weights on GPU, nothing generated yet),
+# then reset peak counters so max_memory_* below reflects only the generation phase.
+torch.cuda.synchronize(gpu)
+_baseline_allocated = torch.cuda.memory_allocated(gpu) / 1e9
+_baseline_reserved = torch.cuda.memory_reserved(gpu) / 1e9
+print(f"[MEM] baseline after model load: allocated={_baseline_allocated:.2f} GB, "
+      f"reserved={_baseline_reserved:.2f} GB")
+torch.cuda.reset_peak_memory_stats(gpu)
+
 
 # Create dataset
 if args.i2v:
@@ -299,5 +309,12 @@ if local_rank == 0:
     if valid:
         print(f"[timing] rank0 chunk0 latency excl. decode (from 2nd prompt): "
               f"avg={sum(valid)/len(valid):.3f}s over {len(valid)} samples")
+
+# [MEM] Minimal instrumentation only — peak across the whole generation phase (both videos),
+# measured from the post-load baseline reset above.
+torch.cuda.synchronize(gpu)
+print(f"[MEM] peak during generation: "
+      f"max_allocated={torch.cuda.max_memory_allocated(gpu) / 1e9:.2f} GB, "
+      f"max_reserved={torch.cuda.max_memory_reserved(gpu) / 1e9:.2f} GB")
 
        
