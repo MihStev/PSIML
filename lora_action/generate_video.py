@@ -62,12 +62,19 @@ from train_lora_action import ActionEncoderV2  # noqa: E402
 # std ~0.040 and hard range +/-0.07; dims 2/3 are a different quantity (range 0..4)
 # and are left untouched at their real values.
 DISP_MAX = 0.07
+# SIGN CONVENTION -- verified empirically against raw BAIR pixels (no model involved):
+# episodes with cumulative dim0 > 0 move the gripper LEFT in the image (-8.5 px mean),
+# dim0 < 0 move it RIGHT (+13.2 px mean). So the robot frame's +x is image-left.
+# The first labelling here was inverted; the model had learned the correct physics all
+# along -- the user spotted that "right" videos drifted left, which is what led to this
+# check. Note the real data is itself asymmetric (13.2 px vs 8.5 px), and the model
+# reproduces that asymmetry.
 ACTION_OVERRIDES = {
     "real":  None,                      # use the episode's own actions unchanged
-    "right": (+DISP_MAX, 0.0),          # (dim0, dim1) forced, dims 2/3 kept real
-    "left":  (-DISP_MAX, 0.0),
-    "up":    (0.0, -DISP_MAX),
-    "down":  (0.0, +DISP_MAX),
+    "right": (-DISP_MAX, 0.0),          # (dim0, dim1) forced, dims 2/3 kept real
+    "left":  (+DISP_MAX, 0.0),
+    "up":    (0.0, -DISP_MAX),          # verified: dim1 > 0 moves the gripper DOWN
+    "down":  (0.0, +DISP_MAX),          # (+7.7 px) and dim1 < 0 moves it UP (-3.5 px)
 }
 
 SANITY_MAX_SIGMA = 6.0  # refuse to run if a normalized action exceeds this

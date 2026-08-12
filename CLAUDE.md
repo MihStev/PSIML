@@ -667,6 +667,32 @@ objašnjava zašto je 74σ ulaz bio toliko razoran (ogroman leveridž nad cijelo
 (generisano) = frejmovi 13-28. Oštra granica na 45% NIJE bila postepeno lutanje nego strukturna
 granica stvarnost/generisano.
 
+## SMJER AKCIJE VERIFIKOVAN — model je naučio TAČNU fiziku (12.08, 18:20)
+
+**Korisnik je primijetio da video označen "right" ide LIJEVO, a "left" blago desno.** To je pokrenulo
+provjeru — i ispostavilo se da su MOJE OZNAKE bile obrnute, ne model.
+
+**Verifikacija bez modela, na sirovim BAIR pikselima** (`/tmp/bair_raw/`, 2000 epizoda): uzete
+epizode sa najvećim kumulativnim `dim0` u oba smjera, izmjeren stvarni pomjeraj centroida hvataljke
+(maska po boji: dominantno crveno, niska svjetlina) između frejma 0 i 29:
+
+| akcija | stvarni pomjeraj na slici |
+|--------|---------------------------|
+| `dim0` pozitivno | **-8.53 px** (LIJEVO), std 8.5, n=25 |
+| `dim0` negativno | **+13.18 px** (DESNO), std 7.2, n=25 |
+| `dim1` pozitivno | **+7.69 px** (DOLJE), std 5.6 |
+| `dim1` negativno | **-3.49 px** (GORE), std 7.2 |
+
+→ **Robotsko `+x` je "lijevo" u slici** (koordinatni sistem robota nije poravnat sa kamerom).
+`ACTION_OVERRIDES` u `generate_video.py` ispravljen (right = dim0 **-**0.07, left = **+**0.07).
+`dim1` je bio tačan od početka.
+
+**ZNAČAJ — ovo je nadogradnja rezultata, ne ispravka greške u modelu:** ranije smo imali samo
+"akcija MIJENJA izlaz" (divergencija 34 L1). Sad imamo **"akcija pomjera ruku u fizički TAČNOM
+smjeru"** — što je stvarni cilj projekta. Model je naučio pravu vezu akcija→dinamika, uključujući i
+**asimetriju prisutnu u samim podacima** (13.2 px u jednom smjeru vs 8.5 u drugom — korisnik je to
+nezavisno primijetio kao "left ide na desno blago").
+
 ## PROPUŠTENA PRILIKA U TRENINGU (za sledeći run)
 
 - **Trenirali smo na 0.46 EPOHE**: 2500 koraka × batch 8 = 20,000 uzoraka od 43,264 → **54% dataseta

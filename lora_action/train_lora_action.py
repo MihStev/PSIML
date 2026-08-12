@@ -66,6 +66,10 @@ def parse_args():
     p.add_argument("--wandb_project", default="bair-action-lora")
     p.add_argument("--wandb_run_name", default=None)
     p.add_argument("--no_wandb", action="store_true", help="disable W&B (e.g. for quick local debugging)")
+    p.add_argument("--val_lmdb_path", default="/tmp/bair_lmdb/test",
+                    help="held-out split -- never trained on, so val loss is the honest signal")
+    p.add_argument("--val_every", type=int, default=250)
+    p.add_argument("--val_batches", type=int, default=8)
     return p.parse_args()
 
 
@@ -176,6 +180,14 @@ def main():
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=not args.overfit_single_batch,
                          num_workers=0, collate_fn=collate, drop_last=True)
 
+    val_loader = None
+    if args.val_lmdb_path and os.path.exists(args.val_lmdb_path):
+        val_ds = BairActionLatentDataset(args.val_lmdb_path)
+        val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                                 num_workers=0, collate_fn=collate, drop_last=True)
+        print(f"=== Validation split: {len(val_ds)} held-out samples "
+              f"({args.val_batches} batches every {args.val_every} steps) ===", flush=True)
+
     fixed_batch = None
     if args.overfit_single_batch:
         fixed_batch = next(iter(loader))
@@ -257,6 +269,34 @@ def main():
             out_path = os.path.join(args.checkpoint_dir, f"step_{step+1}.pt")
             torch.save(ckpt, out_path)
             print(f"[checkpoint] saved {out_path}", flush=True)
+
+        if val_loader is not None and ((step + 1) % args.val_every == 0 or step == args.max_steps - 1):
+            # honest signal: these episodes were never trained on
+            val_losses = []
+            with torch.no_grad():
+                for vi, vbatch in enumerate(val_loader):
+                    if vi >= args.val_batches:
+                        break
+                    vlat = vbatch["clean_latent"].to(device=device, dtype=torch.bfloat16)
+                    vact = vbatch["actions_per_latent"].to(device)
+                    vn = (vact - action_mean) / action_std
+                    vn[:, 0, :] = 0.0
+                    vemb = action_encoder(vn.to(torch.bfloat16))  # no dropout at val time
+                    vloss, _ = model.generator_loss(
+                        image_or_video_shape=[args.batch_size, NUM_FRAMES, 16, 8, 8],
+                        conditional_dict=conditional_dict,
+                        unconditional_dict=unconditional_dict,
+                        clean_latent=vlat,
+                        initial_latent=vlat[:, 0:1, ...],
+                        viewmats=viewmats, Ks=Ks, action_embed=vemb,
+                    )
+                    val_losses.append(vloss.item())
+            vmean = sum(val_losses) / len(val_losses)
+            train_recent = sum(loss_history[-50:]) / len(loss_history[-50:])
+            print(f"[VAL step {step+1}] val_loss={vmean:.4f}  train_recent={train_recent:.4f}  "
+                  f"gap={vmean - train_recent:+.4f}", flush=True)
+            if not args.no_wandb:
+                wandb.log({"val_loss": vmean, "train_val_gap": vmean - train_recent}, step=step)
 
             if not args.no_wandb:
                 # visual sample: real vs. this step's x0_pred (same batch just used), for
