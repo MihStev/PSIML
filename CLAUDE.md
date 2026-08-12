@@ -396,11 +396,25 @@ Podela rada dan 1: Mihajlo teorijska strana, Dawidzard infrastruktura/tehnički 
 
 **Novi zadaci (dan 2, iz ove diskusije):**
 - [ZAVRŠENO, ispred plana iz reporta] BAIR tar → TFRecord → window-ekstrakcija (`extract_bair_windows.py`)
+- [ZAVRŠENO] VAE-enkodiranje window-a → LMDB (`build_bair_lmdb.py`), 43,264 trening sekvenci,
+  latenti `(8,16,8,8)` + sirove akcije `(30,4)` po uzorku. Kompatibilan sa postojećim
+  `CameraLatentLMDBDataset` (dummy identity kamera polja) + novo `actions` polje.
+- [ZAVRŠENO] **Pravi (ne mock) memory/speed benchmark** (`real_training_benchmark.py`) — spojio
+  LoRA rank=64 (75.69M trenable) + action-injection POC + gradient checkpointing + PRAVE latente
+  iz LMDB-a u jedan pravi training korak (forward+backward+optimizer.step()). **REZULTAT (BATCH=1):**
+  steady-state **0.68s/korak**, peak memorija **15.40GB/40GB** (skoro identično mock testu, 15.38GB
+  — dobra unakrsna potvrda memorije). Projekcija za 2.5k iteracija: **~28 minuta** — DRASTIČNO manje
+  od Nedkove procjene (20-30h), jer je njegova procjena bila iz native-rezolucijskog (832×480)
+  tajminga, ne BAIR skale. **VAŽNA OGRADA: ovo je BATCH=1.** Repo-ov onboarding skill izričito kaže
+  "bs < 8 nije dovoljno za kontrolabilnost" — pravi trening mora ići sa batch≥8, vrijeme/memorija
+  će se promijeniti (vjerovatno ne linearno, GPU se bolje iskoristi pri batch-ovanju, vidi isti
+  efekat kod VAE-enkodiranja). **Sledeći korak prije javljanja mentoru: ponoviti benchmark sa
+  batch≥8 za pouzdan konačan broj.**
 - [U TOKU] LoRA fine-tuning implementacija (condition-injection POC gotov, VideoX-Fun referenca kao
   osnova za training loop, vidi sekciju gore) — glavni tehnički cilj
-- [NOVO] Kad training loop postoji: eksplicitno provjeriti da koristi ugrađeni gradient checkpointing
-  (tačka 3 gore), i uraditi pravi memory/speed test na BAIR skali (ne mock/sintetički) da se potvrdi
-  ili obori Nedkova zabrinutost iz tačke 1
+- [NEODLUČENO] Kako se akcija ubacuje po AR bloku (BAIR daje 30 akcija/epizodu, injection mehanizam
+  trenutno uzima JEDNU — benchmark gore koristi mean-pool kao privremeni placeholder, NE rešava
+  ovo pitanje). Otvoreno za diskusiju sa mentorom/timom.
 - [PLANIRANO] Čitanje originalnog minWM paper-a detaljnije (obostrano, teorijska podloga)
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
