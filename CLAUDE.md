@@ -466,15 +466,24 @@ caption, T5-enkodiran JEDNOM, keširan na disk — tekst više NE nosi akciju).
 
 ## NOVI RIZICI (identifikovani review-om, nismo ih ranije vidjeli)
 
-1. **[NAJVAŽNIJI, NEPROVJEREN] 64×64 možda je prenisko za ovaj backbone.** Wan2.1 treniran na
-   480p+; na 64×64 latent je 8×8, sa patch size 2 to je ~16 tokena/frejm — daleko izvan režima u
-   kom je model treniran (RoPE pozicije, spatial prior). Naš VAE round-trip test (nizak MSE) NE
-   dokazuje ništa o tome da li DiT može smisleno da denoise-uje na ovoj skali — VAE i DiT su
-   odvojene stvari. **Dijagnostika prije daljeg rada (SLEDEĆI KORAK, u toku):** uzeti jedan BAIR
-   klip, encode, dodati umjeren šum, denoise par koraka pretreniranim modelom, decode, pogledati
-   da li je smisleno ili kaša. Ako je kaša → upsample BAIR na 256×256 (bicubic) prije VAE-a (latent
-   32×32, ~256 tok/frejm, i dalje ogromna memorijska margina) prije nego se piše training loop.
-   128×128 je kompromis ako fali vremena.
+1. **[RIJEŠENO, 12.08] 64×64 NIJE prenisko za ovaj backbone — potvrđeno na pravim podacima.**
+   Dva testa (`lora_action/resolution_diagnostic.py`, `resolution_compare.py`), NO LoRA (čist
+   pretreniran backbone):
+   - **Test A (jedan korak, automatski rastući šum po frejmu iz training rasporeda):** rani
+     frejmovi zamućeni ali prepoznatljivi, kasniji frejmovi degradiraju u boju/šum bez strukture.
+     Prvo je izgledalo zabrinjavajuće, ALI:
+   - **Test B (fiksiran umjeren šum na SVIM frejmovima + 3 iterativna koraka refinement-a, čist
+     protokol):** **konzistentno dobra rekonstrukcija kroz CIJELU sekvencu**, gornji (pravo) i
+     donji (predikcija) red se skoro poklapaju, boje/oblici/pozicije tačni, oba testirana uzorka.
+     → **Test A "kaša" je bila posljedica visokog šuma po frejmu (training raspored), NE
+     rezolucije.** DiT jasno može da predstavi/denoise-uje BAIR scenu na 64×64.
+   - **Pokušaj testa na 128×128 (bicubic upsample) je PUKAO** — ne kvalitetom, nego strukturno:
+     `flex_attention` block_mask je precomputed fiksne veličine (vezan za native 8×8 latent/64×64
+     konfiguraciju), ne rekonstruiše se automatski za drugu rezoluciju/broj tokena. Popravka bi
+     tražila dodatnu izmjenu koda (parametrizacija block mask konstrukcije po rezoluciji).
+   - **ODLUKA: ostajemo na native 64×64.** Rizik riješen, upsampling na 128/256 se NE radi (nema
+     potrebe s obzirom da je 64×64 potvrđeno OK, a fix za block_mask je netrivijalan dodatni posao
+     koji ne donosi korist s obzirom na 5-dnevni rok).
 2. **PSNR/SSIM/FID ne dokazuju kontrolabilnost** — BAIR ima fiksnu kameru/statičnu pozadinu, model
    koji IGNORIŠE akciju i samo kopira kontekst dobija pristojan PSNR. **Prava metrika: action-swap
    divergence** — isti početni frejm, dvije različite akcione sekvence (prava vs. shuffle/negacija),
