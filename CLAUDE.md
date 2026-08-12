@@ -712,6 +712,63 @@ SEMANTIČKI TAČNOM smjeru (da "right" stvarno pomjera hvataljku desno). Za to t
 provjera smjera ili kvantitativna mjera pozicije hvataljke. Takođe: testirano na JEDNOM uzorku
 (idx 100), treba na više.
 
+## VELIKI TRENING U TOKU (12.08, 18:22 →) — W&B run `fpppbwfj`
+
+Pokrenut nakon što je generacija riješena i kontrolabilnost dokazana. Cilj: iskoristiti resurs koji
+je prošli run ostavio neiskorišćenim (0.46 epohe, GPU na 34-45%).
+
+**Konfiguracija:** `--rank 16 --batch_size 32 --max_steps 8000 --lr_lora 2e-4 --lr_action 6e-4
+--checkpoint_every 500 --val_every 500`, checkpointi u `/home/mls10/checkpoints/bair_lora_big/`,
+log `/home/mls10/logs/big_training.log`,
+W&B https://wandb.ai/sm220315d-etf-/bair-action-lora/runs/fpppbwfj
+
+- LR skaliran 2x (sqrt pravilo) jer je batch 4x veći. Reverzibilno — checkpoint svakih 500 koraka.
+- 8000 × 32 = 256,000 uzoraka = **5.9 epoha** (prošli run: 0.46 epohe).
+
+**NOVO — validacioni loss na neviđenom test splitu.** Do sada smo SVE evaluirali na trening
+podacima (i `idx=100` iz demo generacije je iz train LMDB-a — model je vidio tu epizodu). Test split
+(256 uzoraka, `/tmp/bair_lmdb/test`) stajao je netaknut od 13:25. Sad se evaluira svakih 500 koraka
+— rješava i metodološki prigovor i detekciju prezasićenja odjednom (sa 5.9 epoha overfitting postaje
+moguć, sa 0.46 nije bio).
+
+**Izmjereno u prvim koracima:**
+
+| | bs=8 (prošli) | bs=32 (ovaj) |
+|---|---|---|
+| s/korak | 1.33 | **3.45** |
+| memorija | 15.4 GB | **16.7 GB** (4x batch = +1.3 GB, aktivacije zanemarljive) |
+| GPU util | 34-45% | **58%** |
+| propusnost | 6.0 uzoraka/s | **9.3 uzoraka/s** (+55%) |
+
+Procjena: 8000 × 3.45s = **7.6h → kraj ~02:00**.
+
+**PRVI VAL REZULTAT (korak 500): `val_loss=0.1483`, `train_recent=0.1409`, gap `+0.0074`** — samo 5%
+lošije na podacima koje model nikad nije vidio. **Nema prezasićenja, model generalizuje.**
+
+**Napomena:** prošli run je ZAVRŠIO na `avg_recent_loss=0.1263` posle svih 2500 koraka; ovaj je na
+0.127 već na koraku 650 (8% puta). Ostatak treninga je čist dobitak. ALI: očekivati poboljšanje u
+KVALITETU KONTROLE, ne u loss broju — kriva se već izravnava. Mjeriti divergencijom i tačnošću
+smjera, ne loss-om.
+
+**Kriterijum za prekid:** kad `val_loss` prestane da pada ili počne da raste dok train pada. Bolje
+od bilo kog unaprijed određenog broja koraka. Checkpoint svakih 500 → zaustavljanje je besplatno.
+
+## ISPRAVKA RANIJEG ZAKLJUČKA: 128/256 rezolucija NIJE strukturno blokirana
+
+Ranije sam zapisao da je 128×128 "puklo strukturno" (`flex_attention block_mask` fiksne veličine) i
+otpisao upsampling. **To je bio pogrešan zaključak.** Maska se kešira pri PRVOM pozivu
+(`if self.block_mask is None` u `_forward_train`) — pukla je samo zato što je `resolution_compare.py`
+radio 64 **pa onda** 128 u ISTOM procesu. Trening na jednoj rezoluciji nikad ne bi naišao na to.
+
+**Ako se ide na 256×256 (kandidat za dan 3, TEK nakon evaluacije ovog treninga):**
+- **BAIR je nativno 64×64** — upsampling 64→256 NE dodaje informaciju, zamućenost je upečena.
+  Jedini pravi argument je REŽIM: Wan2.1 je treniran na 480p+, naših 8×8 latenta = 16 tokena/frejm
+  je daleko izvan njegovog režima; 256×256 daje 32×32 latent = 256 tokena/frejm, mnogo bliže.
+- Cijena: 2048 tokena po klipu umjesto 128 (**16x**), LMDB ~14.5 GB umjesto 0.9 GB, vjerovatno
+  20-40 s/korak → traži manji batch. To je zaseban poludnevni eksperiment, ne "igranje".
+- NE raditi prije nego što se izmjeri kontrolabilnost ovog treninga — inače se ne zna šta je čemu
+  doprinijelo.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
