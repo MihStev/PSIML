@@ -427,10 +427,76 @@ Podela rada dan 1: Mihajlo teorijska strana, Dawidzard infrastruktura/tehnički 
   iz onboarding skilla ispoštovan).
 - [U TOKU] LoRA fine-tuning implementacija (condition-injection POC gotov, VideoX-Fun referenca kao
   osnova za training loop, vidi sekciju gore) — glavni tehnički cilj
-- [NEODLUČENO] Kako se akcija ubacuje po AR bloku (BAIR daje 30 akcija/epizodu, injection mehanizam
-  trenutno uzima JEDNU — benchmark gore koristi mean-pool kao privremeni placeholder, NE rešava
-  ovo pitanje). Otvoreno za diskusiju sa mentorom/timom.
 - [PLANIRANO] Čitanje originalnog minWM paper-a detaljnije (obostrano, teorijska podloga)
+
+## ARHITEKTONSKA ODLUKA (12.08, nakon review-a jačeg modela) — action injection PREKO timestep/AdaLN, ne text-slot
+
+**Stari mehanizam (text-embedding slot upis, iz POC-a) se NAPUŠTA za pravi trening.** Razlog:
+mean-pool 30 sirovih akcija u JEDNU (placeholder korišćen za benchmark gore) je **diskvalifikujuć,
+ne samo suboptimalan** — BAIR akcije su delte (pomjeraj po prelazu), prosjek npr. "lijevo pa nazad"
+≈ nula, model nema iskoristiv signal, nauči da ignoriše akciju, generiše "nešto što liči na BAIR"
+sa pristojnim PSNR-om ali BEZ kontrolabilnosti — demo bi bio mrtav.
+
+**Novi mehanizam — potvrđeno izvodljiv u kodu (ne samo predlog):**
+`causal_model.py:1006-1008` — `e0 = self.time_projection(e).unflatten(dim=0, sizes=t.shape)`
+— **postoji već gotova PO-FREJMU timestep/AdaLN magistrala**, oblika `[B, F, 6, dim]` (svaki
+latentni frejm ima svoj noise-level embedding, jer je to suština teacher-forcing/diffusion-forcing
+treninga). Akcija se dodaje na ovu magistralu, ne na text-embedding.
+
+**Poravnanje akcija ↔ latentni frejmovi** (VAE je kauzalan, frejm 0 poseban — potvrđeno našim
+ranijim decode testom: 8 latenata → 29 sirovih frejmova = 1 + 4×7):
+```
+sirovi frejmovi:  0 | 1  2  3  4 | 5  6  7  8 | ...
+latentni frejm:    0 |     1      |     2      | ...
+akcije (a_t = prelaz t→t+1):
+  latent 0 -> nema prošle akcije (nula ili a_0)
+  latent 1 -> a_0,a_1,a_2,a_3 (16 brojeva, FLATTEN, ne prosjek!)
+  latent 2 -> a_4,a_5,a_6,a_7
+  ...
+```
+
+**ActionEncoder v2:** `Linear(16,256) -> SiLU -> Linear(256,256) -> SiLU -> Linear(256,dim)`,
+**poslednji Linear zero-init** (weight i bias) — model na koraku 0 ponaša se identično pretreniranom,
+ništa se ne uništava startom. Dodaje se na per-frame timestep embedding PRIJE `time_projection`
+(ili na projektovani modulation vektor — provjeriti koje se oblici čistije poklapaju).
+
+**Dodatno u planu:** normalizacija akcija (mean/std preko trening seta, sačuvati u checkpoint),
+action dropout p=0.1 (naučeni null embedding, omogućava CFG na inferenci), fiksan tekst (jedan
+caption, T5-enkodiran JEDNOM, keširan na disk — tekst više NE nosi akciju).
+
+## NOVI RIZICI (identifikovani review-om, nismo ih ranije vidjeli)
+
+1. **[NAJVAŽNIJI, NEPROVJEREN] 64×64 možda je prenisko za ovaj backbone.** Wan2.1 treniran na
+   480p+; na 64×64 latent je 8×8, sa patch size 2 to je ~16 tokena/frejm — daleko izvan režima u
+   kom je model treniran (RoPE pozicije, spatial prior). Naš VAE round-trip test (nizak MSE) NE
+   dokazuje ništa o tome da li DiT može smisleno da denoise-uje na ovoj skali — VAE i DiT su
+   odvojene stvari. **Dijagnostika prije daljeg rada (SLEDEĆI KORAK, u toku):** uzeti jedan BAIR
+   klip, encode, dodati umjeren šum, denoise par koraka pretreniranim modelom, decode, pogledati
+   da li je smisleno ili kaša. Ako je kaša → upsample BAIR na 256×256 (bicubic) prije VAE-a (latent
+   32×32, ~256 tok/frejm, i dalje ogromna memorijska margina) prije nego se piše training loop.
+   128×128 je kompromis ako fali vremena.
+2. **PSNR/SSIM/FID ne dokazuju kontrolabilnost** — BAIR ima fiksnu kameru/statičnu pozadinu, model
+   koji IGNORIŠE akciju i samo kopira kontekst dobija pristojan PSNR. **Prava metrika: action-swap
+   divergence** — isti početni frejm, dvije različite akcione sekvence (prava vs. shuffle/negacija),
+   rollout oba, izmjeriti L2/PSNR razliku IZMEĐU njih. Ako je razlika ~0, model ignoriše akciju bez
+   obzira na apsolutni PSNR/SSIM/FID. Dodati ovo, javiti mentoru da se dodaje.
+3. **`num_frame_per_block=4`** — provjereno u kodu (`ar_camera_tf.yaml`, `causal_model.py`),
+   konfigurabilan parametar, ALI vjerovatno "zapečen" u to na čemu je Stage-1 checkpoint treniran
+   (block-causal maska + KV-cache raspored). NE dirati veličinu bloka radi finije kontrole —
+   granularnost rešava per-frame injection (gore), ne manji blok.
+4. **Timestep sampling mora odgovarati Stage-1 režimu** (per-frame nezavisni noise levels, ne isti
+   timestep za sve frejmove) — tiha greška ako se ignoriše: loss pada, trening "radi", rezultat je
+   loš. **Reuse-ovati postojeći trainer-ov timestep-sampling kod, ne pisati nov.**
+5. Rank 64 vjerovatno overkill — novo znanje ("akcija→dinamika") je u ActionEncoder-u, ne u LoRA
+   rangu. Razmotriti rank 32 + odvojen, viši LR za ActionEncoder (npr. 3e-4 vs 1e-4 za LoRA).
+6. **Prije dugog treninga, obavezno:** (a) grad-check na LoRA+ActionEncoder zajedno (imamo sličnu
+   provjeru već, ponoviti sa novim mehanizmom), (b) overfit-one-batch (~300 koraka na JEDAN batch,
+   loss mora ići skoro na nulu, decode mora vizuelno odgovarati) — jeftina provjera PRIJE trošenja
+   GPU sati na dugi trening.
+
+**Sledeći korak (redoslijed, dogovoren):** (1) rezoluciona dijagnostika [U TOKU] → (2) ako prođe,
+pisanje training loop-a sa per-frame action injection → (3) grad-check + overfit-one-batch → (4) pravi
+dugi trening, checkpoint na svakih 250 koraka, action-swap divergence eval na svakom checkpointu.
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
