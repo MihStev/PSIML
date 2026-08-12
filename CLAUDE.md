@@ -552,6 +552,24 @@ malo i additivno, svi novi parametri default `None` tako da se ništa ne mijenja
 **SLEDEĆE:** pravi dugi trening (2500 iteracija, rank TBD od tima — vidi rank sweep tabelu gore),
 plus action-swap divergence eval (tačka 2 od rizika) prije/uz to.
 
+## PRAVI TRENING POKRENUT (12.08, popodne) — W&B praćenje uživo
+
+**Odluka tima: rank=16.** Action-swap divergence eval i PSNR/SSIM/FID **odloženi za kasnije**
+(dogovoreno, ne blokira start dugog treninga).
+
+- **W&B integracija** dodata u `train_lora_action.py` — scalar metrike (`loss`, `avg_recent_loss`)
+  na svaki `--log_every` korak, **vizuelni uzorak** (pravo vs. predikcija, dekodiran) na svaki
+  checkpoint. `--no_wandb` flag za lokalni debug bez W&B-a.
+- **"I have no name!" UID bag riješen trajno** (ne samo prefiks po komandi) — `export
+  USER/LOGNAME/HOME` dodato u `~/.bashrc`, važi za sve NOVE terminale ubuduće (Mihajlov isto).
+- **Pokrenuto:** `train_lora_action.py --rank 16 --batch_size 8 --max_steps 2500
+  --checkpoint_every 250`, pozadinski proces, log `/home/mls10/logs/real_training_run.log`,
+  checkpoint-i u `/home/mls10/checkpoints/bair_lora/step_{250,500,...,2500}.pt`.
+- **W&B run:** https://wandb.ai/sm220315d-etf-/bair-action-lora/runs/9ljziy6w — uživo praćenje
+  loss krive i vizuelnih uzoraka. Očekivano trajanje ~1h (po rank=16 benchmarku, batch=8).
+- Provjereno: `wandb/` folder koji `wandb.init()` pravi lokalno je već u `.gitignore` (linija 171),
+  neće se slučajno komitovati.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
