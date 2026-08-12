@@ -615,6 +615,77 @@ daljeg kodiranja. **Dokaz da mehanizam (LoRA+ActionEncoder) uopšte radi ostaje 
 provjera + zdrava loss kriva treninga — generacija je odvojen, dodatni problem, ne dovodi u pitanje
 da li je trening uspio.**
 
+## GENERACIJA RIJEŠENA + KONTROLABILNOST DOKAZANA (12.08, 18:11)
+
+**Obje greške bile su u `generate_video.py`, NIJEDNA u treningu.** Dijagnoza vođena mjerenjem:
+
+**BUG 1 — skala akcije (fatalna).** Izmišljene "kanonske" akcije `[3.0,0,0,0]`. Stvarni BAIR dims
+0/1: std=0.0405, opseg ±0.07 → 3.0 je **74 sigma** izvan distribucije. ActionEncoder je davao
+embedding norme **218 vs ~3.5 za prave akcije (62x)**. Taj vektor se dodaje na per-frame time
+embedding prije `time_projection`, tj. postaje AdaLN shift/scale/gate za **svih 30 DiT blokova** —
+62x predimenzionisan vektor uništi modulaciju cijele mreže. Otud zelena kaša + eksplozija latenta.
+FIX: akcije se grade iz PRAVE akcione sekvence, override samo dims 0/1 unutar ±0.07; + hard guard
+koji odbija pokretanje ako akcija pređe 6 sigma.
+
+**BUG 2 — razbijena blok-struktura.** Trening uvijek daje JEDAN zajednički timestep po bloku od
+`num_frame_per_block=4` frejmova (`BaseModel._get_timestep`). V1 je stavio frejm 0 na t=0 a frejmove
+1-3 (isti blok!) na t=1000. FIX: generisanje na granularnosti bloka — frejmovi 0-3 pravi kontekst
+(t=0), frejmovi 4-7 generisani (jedan zajednički t). Provjerena i maska
+(`_prepare_teacher_forcing_mask`): `noise_context_ends = block_index * attention_block_size`, znači
+noisy blok i vidi čiste frejmove SAMO prethodnih blokova → nema trivijalnog prepisivanja, trening
+zadatak je legitiman.
+
+**BUG 3 — pogrešan sampler.** Euler ODE (`scheduler.step` na `flow_pred`) akumulira grešku bez
+korekcije → latenti odlutaju na ±13 (pravi su ±3-4) → zasićena ravna žuta boja. FIX: **x0-sampler**
+(predvidi x0 → ponovo zašumi na sledeći sigma → ponovi), koji svaki korak vraća rješenje na manifold
+podataka, + clamp na ±6. Napomena: V1 je slučajno koristio x0-pristup i ja sam pogrešno zaključio
+da je sampler kriv — pao je zbog BUG 1, ne zbog samplera.
+
+**REZULTAT (x0 sampler, 24 koraka, rank16/step_2500):** `|x0|` stabilno **0.75 kroz svih 24 koraka**,
+opseg ±2.9 (tačno kao pravi latenti) — nula lutanja. Vizuelno: koherentna robotska scena kroz cijelu
+sekvencu, u sva tri varijanta. Izlazi: `/home/mls10/logs/generated_v3/`.
+
+**ACTION-SWAP DIVERGENCE — KONTROLABILNOST DOKAZANA BROJČANO:**
+Ista scena (idx 100), isti šum, mijenja se SAMO akcija (`real` / `right`=dim0+0.07 / `left`=dim0-0.07):
+
+| poređenje | kontekst L1 (treba ~0) | GENERISANI dio L1 | PSNR |
+|-----------|------------------------|-------------------|------|
+| real vs right | 2.38 | **33.41** | 12.78 dB |
+| real vs left  | 1.08 | **20.23** | 15.68 dB |
+| right vs left | 2.36 | **34.16** | 12.67 dB |
+
+right-vs-left razlika = 34.16 L1 na skali 0-255, dok je std samog sadržaja 61.46 → **55.6% signala.**
+Kontekst dio ~identičan (1-2 jedinice = mp4 kodek šum). **Akcija nedvosmisleno kontroliše izlaz.**
+
+**Mjerenje magnitude (odgovara na "je li signal akcije preslab"):** `||e||` (time embedding) = 3.2-5.2;
+`||action_embed||` = 3.24 (prava) / 5.7-5.9 (right/left); **`||emb(right)-emb(left)|| = 10.66 = 317%
+od ||e||`**. Akcija je ravnopravan/dominantan doprinos AdaLN modulaciji, ne šapat — što retroaktivno
+objašnjava zašto je 74σ ulaz bio toliko razoran (ogroman leveridž nad cijelom mrežom).
+
+**"Zašto radi do pola pa pukne" (raniji simptom):** VAE dekodira latent 0 → 1 piksel-frejm, latente
+1-7 → po 4. Znači latenti 0-3 (kontekst) = piksel-frejmovi 0-12 = **45% slike**, latenti 4-7
+(generisano) = frejmovi 13-28. Oštra granica na 45% NIJE bila postepeno lutanje nego strukturna
+granica stvarnost/generisano.
+
+## PROPUŠTENA PRILIKA U TRENINGU (za sledeći run)
+
+- **Trenirali smo na 0.46 EPOHE**: 2500 koraka × batch 8 = 20,000 uzoraka od 43,264 → **54% dataseta
+  nikad viđeno**. Nijedan uzorak nije viđen dvaput (nema overfit rizika), ali je resurs neiskorišćen.
+- **GPU je bio na 34-45% iskorišćenosti, 15.4GB od 40GB.** Ključno: batch=1 → 15.40GB, batch=8 →
+  15.40GB — **batch size praktično ne utiče na memoriju** (15GB su fiksne težine, aktivacije su na
+  ovoj skali zanemarljive). batch 32-64 bi stalo bez problema.
+- Zašto je trajalo samo 55min: 128 latentnih tokena po klipu naspram 31,200 na native rezoluciji
+  (244x manje). Ubrzanje "samo" ~23x jer pri 128 tokena dominira fiksni trošak 30 blokova, ne FLOPs.
+- 2500 iteracija je bio MINIMUM (Nedko), a repo skill kaže da se kontrolabilnost ne vidi prvih ~1000
+  koraka → efektivno ~1500 korisnih koraka.
+- **PREPORUKA za sledeći trening:** `--batch_size 32 --max_steps 8000` = 256,000 uzoraka = 5.9 epoha
+  (13x više podataka), procjena ~3-4h. Imamo i memoriju i vrijeme.
+
+**OSTAJE OTVORENO:** divergencija dokazuje da akcija MIJENJA izlaz, ali ne i da ga mijenja u
+SEMANTIČKI TAČNOM smjeru (da "right" stvarno pomjera hvataljku desno). Za to treba ili vizuelna
+provjera smjera ili kvantitativna mjera pozicije hvataljke. Takođe: testirano na JEDNOM uzorku
+(idx 100), treba na više.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

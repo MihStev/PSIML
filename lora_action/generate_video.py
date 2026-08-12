@@ -1,21 +1,39 @@
 #!/usr/bin/env python
 """
-Actually GENERATE a video: given a real BAIR frame as the starting scene and a
-CHOSEN action sequence (not from the dataset -- typed in / picked by us), roll
-out the future frames from pure noise using the TRAINED LoRA + ActionEncoder,
-decode, save as mp4 + a comparison PNG.
+Generate future frames from a real BAIR context, with a CHOSEN action.
 
-Sampling method: same iterative-refinement technique already validated in
-resolution_compare.py (fixed descending noise levels + a few refinement
-steps) -- proven to give coherent output at 64x64. NOT the distilled-model
-CausalInferencePipeline (that needs `denoising_step_list`, which only exists
-in the later-stage configs, not our teacher-forcing Stage 1 config).
+=== V2 -- rewritten after diagnosing why V1 produced green mush ===
 
-Usage:
-    python generate_video.py --checkpoint /home/mls10/checkpoints/bair_lora/step_2500.pt \
-        --context_idx 100 --action right    # or --action left / --action custom --action_vec ...
+Two real bugs were found in V1 (both here, NOT in training):
+
+BUG 1 -- ACTION SCALE (the fatal one). V1's hand-written "canonical" actions used
+values like [3.0, 0, 0, 0]. Real BAIR action dims 0/1 have std=0.0405 and range
++/-0.07. After the training-set normalization, 3.0 became a **74-sigma** input.
+The ActionEncoder then emitted an embedding with norm ~218 vs ~3.5 for real
+actions (62x too large). That embedding is ADDED to the per-frame time embedding
+before time_projection, i.e. it becomes the AdaLN shift/scale/gate for all 30 DiT
+blocks -- so a 62x oversized vector destroys the modulation of the entire network.
+Hence: green mush, and latents exploding monotonically under ODE integration.
+
+BUG 2 -- BROKEN BLOCK STRUCTURE. Training always assigns ONE shared timestep per
+block of num_frame_per_block(=4) frames (see BaseModel._get_timestep). V1 set
+frame 0 to t=0 while frames 1..3 (same block!) were at t=1000 -- a combination the
+model never saw. Also, the teacher-forcing mask (_prepare_teacher_forcing_mask)
+gives noisy block i access to clean frames of PREVIOUS blocks only
+(noise_context_ends = block_index * attention_block_size), so "1 context frame"
+was never a meaningful unit anyway.
+
+V2 therefore generates at BLOCK granularity, exactly matching the training regime:
+    frames 0-3 (block 0): real context, clean, timestep 0
+    frames 4-7 (block 1): generated from pure noise, one shared timestep
+and builds chosen actions by taking a REAL action sequence and overriding only
+dims 0/1 (the displacement dims) with values inside the real +/-0.07 range.
+
+It generates several variants in ONE model load so they are directly comparable:
+real action, pushed-right, pushed-left -- which doubles as a first look at whether
+the action actually controls the output (the real controllability eval is still a
+separate, later task).
 """
-import argparse
 import os
 import sys
 
@@ -29,6 +47,8 @@ sys.path.insert(0, "/home/mls10/minWM-dawidzard/shared")
 sys.path.insert(0, "/home/mls10/minWM-dawidzard/lora_action")
 os.chdir("/home/mls10/minWM-dawidzard")
 
+import argparse
+
 import lmdb
 import numpy as np
 import torch
@@ -38,29 +58,48 @@ from PIL import Image
 from wan_utils.lmdb_ import get_array_shape_from_lmdb, retrieve_row_from_lmdb  # noqa: E402
 from train_lora_action import ActionEncoderV2  # noqa: E402
 
-N_INFERENCE_STEPS = 12  # proper flow-matching ODE steps via scheduler.step(), starting from pure noise
-
-# hand-picked "canonical" gripper delta directions for --action left/right/up/down
-# (BAIR action = [dx, dy, ...]; exact scale doesn't matter much, direction does)
-CANONICAL_ACTIONS = {
-    "left":  np.array([-3.0, 0.0, 0.0, 0.0], dtype=np.float32),
-    "right": np.array([3.0, 0.0, 0.0, 0.0], dtype=np.float32),
-    "up":    np.array([0.0, -3.0, 0.0, 0.0], dtype=np.float32),
-    "down":  np.array([0.0, 3.0, 0.0, 0.0], dtype=np.float32),
-    "still": np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+# measured from the training set (see diagnosis): dims 0/1 are displacements with
+# std ~0.040 and hard range +/-0.07; dims 2/3 are a different quantity (range 0..4)
+# and are left untouched at their real values.
+DISP_MAX = 0.07
+ACTION_OVERRIDES = {
+    "real":  None,                      # use the episode's own actions unchanged
+    "right": (+DISP_MAX, 0.0),          # (dim0, dim1) forced, dims 2/3 kept real
+    "left":  (-DISP_MAX, 0.0),
+    "up":    (0.0, -DISP_MAX),
+    "down":  (0.0, +DISP_MAX),
 }
+
+SANITY_MAX_SIGMA = 6.0  # refuse to run if a normalized action exceeds this
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--checkpoint", default="/home/mls10/checkpoints/bair_lora/step_2500.pt")
     p.add_argument("--lmdb_path", default="/tmp/bair_lmdb/train")
-    p.add_argument("--context_idx", type=int, default=100, help="LMDB index to take the starting scene from")
-    p.add_argument("--action", default="right", choices=list(CANONICAL_ACTIONS) + ["custom"])
-    p.add_argument("--action_vec", type=float, nargs=4, default=None,
-                    help="used only with --action custom, e.g. --action_vec 3 0 0 0")
-    p.add_argument("--out_dir", default="/home/mls10/logs/generated_videos")
+    p.add_argument("--context_idx", type=int, default=100)
+    p.add_argument("--variants", nargs="+", default=["real", "right", "left"])
+    p.add_argument("--n_steps", type=int, default=24, help="sampling steps")
+    p.add_argument("--sampler", default="x0", choices=["x0", "euler"],
+                    help="x0 = predict-x0-then-renoise (re-projects onto the data manifold every\n                          step, robust to imperfect v); euler = raw ODE on the flow prediction")
+    p.add_argument("--x0_clamp", type=float, default=6.0,
+                    help="clamp x0_pred to +/-this (real latents measured at ~+/-4); 0 disables")
+    p.add_argument("--out_dir", default="/home/mls10/logs/generated_videos_v2")
     return p.parse_args()
+
+
+def build_actions(raw_actions_30x4, n_latent, override):
+    """Align raw actions to latent frames exactly as in training (bair_dataset.py),
+    optionally overriding the two displacement dims with a chosen constant."""
+    a = raw_actions_30x4.copy()
+    if override is not None:
+        a[:, 0] = override[0]
+        a[:, 1] = override[1]
+    out = np.zeros((n_latent, 16), dtype=np.float32)
+    for i in range(1, n_latent):
+        chunk = a[4 * (i - 1):4 * i].flatten()
+        out[i, :len(chunk)] = chunk
+    return out
 
 
 def main():
@@ -75,28 +114,30 @@ def main():
     print(f"checkpoint step={ckpt['step']} rank={rank}", flush=True)
 
     config = OmegaConf.load("Wan21/configs/ar_camera_tf.yaml")
-    default_config = OmegaConf.load("Wan21/configs/default_config.yaml")
-    config = OmegaConf.merge(default_config, config)
+    config = OmegaConf.merge(OmegaConf.load("Wan21/configs/default_config.yaml"), config)
+    NUM_FRAME_PER_BLOCK = config.num_frame_per_block
 
     from model import CameraCausalDiffusion  # noqa: E402
 
     print("=== Constructing model + loading BASE checkpoint ===", flush=True)
     model = CameraCausalDiffusion(config, device=device)
-    base_ckpt = torch.load("/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt", map_location="cpu")
-    gen_sd = base_ckpt.get("generator_ema", base_ckpt.get("generator"))
+    base = torch.load("/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt", map_location="cpu")
+    gen_sd = base.get("generator_ema", base.get("generator"))
     try:
         model.generator.load_state_dict(gen_sd)
     except RuntimeError:
-        fixed = {k.replace("model._fsdp_wrapped_module.", "model.", 1): v for k, v in gen_sd.items()}
-        model.generator.load_state_dict(fixed, strict=False)
+        model.generator.load_state_dict(
+            {k.replace("model._fsdp_wrapped_module.", "model.", 1): v for k, v in gen_sd.items()},
+            strict=False)
     model.generator.to(device=device, dtype=torch.bfloat16)
     model.text_encoder.to(device=device, dtype=torch.bfloat16)
     model.vae.to(device=device, dtype=torch.bfloat16)
 
-    print(f"=== Injecting LoRA (rank={rank}) + loading TRAINED weights ===", flush=True)
+    print(f"=== Injecting LoRA (rank={rank}) + trained weights ===", flush=True)
     from peft import LoraConfig, inject_adapter_in_model  # noqa: E402
-    lora_config = LoraConfig(r=rank, lora_alpha=rank * 2, target_modules=["q", "k", "v", "ffn.0", "ffn.2"])
-    inject_adapter_in_model(lora_config, model.generator.model)
+    inject_adapter_in_model(
+        LoraConfig(r=rank, lora_alpha=rank * 2, target_modules=["q", "k", "v", "ffn.0", "ffn.2"]),
+        model.generator.model)
     model.generator.model.load_state_dict(ckpt["lora_state_dict"], strict=False)
 
     action_encoder = ActionEncoderV2(out_dim=1536).to(device=device, dtype=torch.bfloat16)
@@ -104,104 +145,114 @@ def main():
     action_mean = ckpt["action_mean"].to(device)
     action_std = ckpt["action_std"].to(device)
 
-    print(f"=== Real starting scene: LMDB idx={args.context_idx} ===", flush=True)
     env = lmdb.open(args.lmdb_path, readonly=True, lock=False)
     lat_shape = get_array_shape_from_lmdb(env, "latents")
+    act_shape = get_array_shape_from_lmdb(env, "actions")
     NUM_FRAMES = lat_shape[1]
-    context_latent_np = retrieve_row_from_lmdb(env, "latents", np.float16, args.context_idx, shape=lat_shape[1:])
-    context_latent = torch.from_numpy(context_latent_np.astype(np.float32)).to(device=device, dtype=torch.bfloat16).unsqueeze(0)
-    real_full_latent = context_latent.clone()  # keep the real continuation too, for side-by-side comparison
+    n_ctx = NUM_FRAME_PER_BLOCK  # block 0 is the real context; blocks 1.. are generated
 
-    # build the CHOSEN action, aligned to latent frames the same way as training (frame 0 = none,
-    # frames 1..F-1 get the SAME chosen action repeated -- we don't have per-transition detail for
-    # a hand-picked action, so we broadcast one direction across the whole rollout)
-    if args.action == "custom":
-        assert args.action_vec is not None, "--action custom requires --action_vec DX DY DZ DW"
-        base_action = np.array(args.action_vec, dtype=np.float32)
-    else:
-        base_action = CANONICAL_ACTIONS[args.action]
-    print(f"=== Chosen action: {args.action} = {base_action.tolist()} ===", flush=True)
+    real_latent_np = retrieve_row_from_lmdb(env, "latents", np.float16, args.context_idx, shape=lat_shape[1:])
+    real_actions = retrieve_row_from_lmdb(env, "actions", np.float32, args.context_idx, shape=act_shape[1:])
+    real_latent = torch.from_numpy(real_latent_np.astype(np.float32)).to(device=device, dtype=torch.bfloat16).unsqueeze(0)
+    print(f"=== Scene: LMDB idx={args.context_idx} | {NUM_FRAMES} latent frames, "
+          f"block size {NUM_FRAME_PER_BLOCK} -> frames 0..{n_ctx-1} = real context, "
+          f"{n_ctx}..{NUM_FRAMES-1} generated ===", flush=True)
 
-    actions_per_latent = np.zeros((NUM_FRAMES, 16), dtype=np.float32)
-    for i in range(1, NUM_FRAMES):
-        actions_per_latent[i] = np.tile(base_action, 4)  # same action for all 4 raw-frame slots
-    actions_t = torch.tensor(actions_per_latent, device=device, dtype=torch.float32).unsqueeze(0)
-    actions_norm = (actions_t - action_mean) / action_std
-    actions_norm[:, 0, :] = 0.0
-    action_embed = action_encoder(actions_norm.to(torch.bfloat16))
-
-    print("=== Real text encoding ===", flush=True)
     prompts = ["a robot arm pushing objects on a table"]
     conditional_dict = model.text_encoder(text_prompts=prompts)
-    unconditional_dict = model.text_encoder(text_prompts=[config.negative_prompt])
 
     viewmats = torch.eye(4, device=device, dtype=torch.bfloat16).view(1, 1, 4, 4).repeat(1, NUM_FRAMES, 1, 1)
     Ks = torch.tensor([[0.5, 0, 0.5], [0, 0.5, 0.5], [0, 0, 1]], device=device, dtype=torch.bfloat16) \
         .view(1, 1, 3, 3).repeat(1, NUM_FRAMES, 1, 1)
 
-    print(f"=== Generating: frame 0 kept as real context, frames 1..{NUM_FRAMES-1} from PURE NOISE ===", flush=True)
-    print(f"=== Proper flow-matching ODE integration via scheduler.step() ({N_INFERENCE_STEPS} steps), "
-          f"NOT the ad-hoc re-noise-the-guess approach (which produced garbage from pure noise) ===", flush=True)
-    # keep the real first (context) latent frame; generate the rest from noise
-    noise = torch.randn_like(context_latent)
-    sample = context_latent.clone()
-    sample[:, 1:] = noise[:, 1:]
-
-    model.scheduler.set_timesteps(N_INFERENCE_STEPS)
-    timesteps_schedule = model.scheduler.timesteps.to(device)
-
-    for i, t_val in enumerate(timesteps_schedule):
-        timestep = torch.full((1, NUM_FRAMES), t_val.item(), device=device, dtype=torch.bfloat16)
-        timestep[:, 0] = 0.0  # frame 0 (real context) always at timestep 0 -- it's given, not noisy
-        sample_in = sample.clone()
-        sample_in[:, 0] = context_latent[:, 0]  # frame 0 always exactly the real context
-
-        flow_pred, x0_pred = model.generator(
-            noisy_image_or_video=sample_in,
-            conditional_dict=conditional_dict,
-            timestep=timestep,
-            clean_x=context_latent if getattr(model, "teacher_forcing", False) else None,
-            aug_t=None,
-            viewmats=viewmats,
-            Ks=Ks,
-            action_embed=action_embed,
-        )
-        to_final = (i == len(timesteps_schedule) - 1)
-        sample = model.scheduler.step(
-            flow_pred.flatten(0, 1).float(), timestep.flatten(0, 1).float(),
-            sample_in.flatten(0, 1).float(), to_final=to_final,
-        ).unflatten(0, (1, NUM_FRAMES)).to(torch.bfloat16)
-        sample[:, 0] = context_latent[:, 0]
-        print(f"[ODE step {i}] t={t_val.item():.1f} sample range="
-              f"({sample.float().min().item():.2f},{sample.float().max().item():.2f})", flush=True)
-
-    current = sample
+    model.scheduler.set_timesteps(args.n_steps)
+    schedule = model.scheduler.timesteps.to(device)
+    print(f"=== Sampling schedule: {args.n_steps} steps, t from {schedule[0]:.0f} to {schedule[-1]:.0f} ===", flush=True)
 
     def decode(latent):
         x = model.vae.decode_to_pixel(latent.to(device))
         return ((x.float().clamp(-1, 1) + 1) / 2 * 255).byte()[0].permute(0, 2, 3, 1).cpu().numpy()
 
-    frames_generated = decode(current)
-    frames_real_continuation = decode(real_full_latent)  # what actually happened in the dataset
+    results = {}
+    for variant in args.variants:
+        override = ACTION_OVERRIDES[variant]
+        apl = build_actions(real_actions, NUM_FRAMES, override)
+        a = torch.tensor(apl, device=device).unsqueeze(0)
+        a_norm = (a - action_mean) / action_std
+        a_norm[:, 0, :] = 0.0
+        max_sigma = a_norm.abs().max().item()
+        action_embed = action_encoder(a_norm.to(torch.bfloat16))
+        emb_norm = action_embed.norm(dim=-1).mean().item()
+        print(f"\n--- variant '{variant}': max|z|={max_sigma:.2f} sigma, "
+              f"||action_embed||={emb_norm:.2f} ---", flush=True)
+        if max_sigma > SANITY_MAX_SIGMA:
+            print(f"    REFUSING: action is {max_sigma:.1f} sigma out of distribution "
+                  f"(this was exactly bug #1). Skipping.", flush=True)
+            continue
 
-    n = min(frames_generated.shape[0], frames_real_continuation.shape[0])
-    grid = np.concatenate([
-        np.concatenate(list(frames_real_continuation[:n]), axis=1),
-        np.concatenate(list(frames_generated[:n]), axis=1),
-    ], axis=0)
+        sample = real_latent.clone()
+        sample[:, n_ctx:] = torch.randn_like(sample[:, n_ctx:])
+
+        for i, t_val in enumerate(schedule):
+            timestep = torch.zeros((1, NUM_FRAMES), device=device, dtype=torch.bfloat16)
+            timestep[:, n_ctx:] = t_val.item()   # one shared timestep per generated block
+            sample[:, :n_ctx] = real_latent[:, :n_ctx]
+
+            flow_pred, x0_pred = model.generator(
+                noisy_image_or_video=sample,
+                conditional_dict=conditional_dict,
+                timestep=timestep,
+                clean_x=real_latent,   # mask gives noisy block i only clean frames of blocks < i
+                aug_t=None,
+                viewmats=viewmats,
+                Ks=Ks,
+                action_embed=action_embed,
+            )
+            if args.sampler == "euler":
+                nxt = model.scheduler.step(
+                    flow_pred.flatten(0, 1).float(), timestep.flatten(0, 1).float(),
+                    sample.flatten(0, 1).float(), to_final=(i == len(schedule) - 1),
+                ).unflatten(0, (1, NUM_FRAMES)).to(torch.bfloat16)
+                sample[:, n_ctx:] = nxt[:, n_ctx:]
+            else:
+                # predict-x0-then-renoise: re-project onto the data manifold each step
+                x0 = x0_pred.float()
+                if args.x0_clamp > 0:
+                    x0 = x0.clamp(-args.x0_clamp, args.x0_clamp)
+                if i == len(schedule) - 1:
+                    sample[:, n_ctx:] = x0[:, n_ctx:].to(torch.bfloat16)
+                else:
+                    s_next = float(model.scheduler.sigmas[i + 1])
+                    renoised = (1 - s_next) * x0 + s_next * torch.randn_like(x0)
+                    sample[:, n_ctx:] = renoised[:, n_ctx:].to(torch.bfloat16)
+            if i % 6 == 0 or i == len(schedule) - 1:
+                g = sample[:, n_ctx:].float()
+                xp = x0_pred[:, n_ctx:].float()
+                print(f"    [step {i:2d}] t={t_val.item():6.1f} "
+                      f"x0_pred=({xp.min():+.2f},{xp.max():+.2f}) |x0|={xp.abs().mean():.3f} "
+                      f"sample=({g.min():+.2f},{g.max():+.2f})", flush=True)
+
+        sample[:, :n_ctx] = real_latent[:, :n_ctx]
+        results[variant] = decode(sample)
+
+    frames_real = decode(real_latent)
+    rows = [("REAL (ground truth)", frames_real)] + [(f"GEN action={k}", v) for k, v in results.items()]
+    n = min(len(f) for _, f in rows)
+    grid = np.concatenate([np.concatenate(list(f[:n]), axis=1) for _, f in rows], axis=0)
     grid_big = np.array(Image.fromarray(grid).resize((grid.shape[1] * 3, grid.shape[0] * 3), Image.NEAREST))
-    png_path = os.path.join(args.out_dir, f"gen_idx{args.context_idx}_action-{args.action}.png")
-    Image.fromarray(grid_big).save(png_path)
-    print(f"=== saved comparison PNG: {png_path} (top=real continuation in dataset, "
-          f"bottom=OUR generated rollout with chosen action) ===", flush=True)
+    png = os.path.join(args.out_dir, f"v2_idx{args.context_idx}.png")
+    Image.fromarray(grid_big).save(png)
+    print(f"\n=== saved {png} ===", flush=True)
+    print("    rows (top->bottom): " + " | ".join(name for name, _ in rows), flush=True)
 
     try:
         import imageio
-        mp4_path = os.path.join(args.out_dir, f"gen_idx{args.context_idx}_action-{args.action}.mp4")
-        imageio.mimsave(mp4_path, [f for f in frames_generated], fps=4)
-        print(f"=== saved mp4: {mp4_path} ===", flush=True)
-    except ImportError:
-        print("=== imageio not available, skipping mp4 (PNG comparison is enough for now) ===", flush=True)
+        for variant, frames in results.items():
+            mp4 = os.path.join(args.out_dir, f"v2_idx{args.context_idx}_{variant}.mp4")
+            imageio.mimsave(mp4, list(frames), fps=4, macro_block_size=1)
+            print(f"=== saved {mp4} ===", flush=True)
+    except Exception as e:
+        print(f"(mp4 export skipped: {e})", flush=True)
 
     print("=== DONE ===", flush=True)
 
