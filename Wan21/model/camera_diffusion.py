@@ -39,6 +39,7 @@ class CameraCausalDiffusion(CausalDiffusion):
         initial_latent: torch.Tensor = None,
         viewmats: Optional[torch.Tensor] = None,
         Ks: Optional[torch.Tensor] = None,
+        action_embed: Optional[torch.Tensor] = None,  # [B, F, dim] per-latent-frame action
     ) -> Tuple[torch.Tensor, dict]:
         from algorithms.flow_matching import flow_matching_loss
 
@@ -88,6 +89,7 @@ class CameraCausalDiffusion(CausalDiffusion):
             aug_t=timestep_clean_aug if self.teacher_forcing else None,
             viewmats=viewmats,
             Ks=Ks,
+            action_embed=action_embed,
         )
         weight = self.scheduler.training_weight(timestep).unflatten(0, (batch_size, num_frame))
         weight = weight.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)

@@ -1133,6 +1133,10 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         y=None,
         viewmats=None,
         Ks=None,
+        action_embed=None,  # [B, F, dim] per-latent-frame action embedding, added to the
+                             # per-frame timestep/AdaLN embedding before time_projection
+                             # (see CLAUDE.md, "ARHITEKTONSKA ODLUKA" -- action injection).
+                             # Same F frames as t/aug_t, so added to both e and e_clean.
     ):
         r"""
         Forward pass through the diffusion model
@@ -1210,6 +1214,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         # with amp.autocast(dtype=torch.float32):
         e = self.time_embedding(
             sinusoidal_embedding_1d(self.freq_dim, t.flatten()).type_as(x))
+        if action_embed is not None:
+            # per-latent-frame action, added BEFORE time_projection (see docstring above)
+            e = e + action_embed.flatten(0, 1).type_as(e)
         e0 = self.time_projection(e).unflatten(
             1, (6, self.dim)).unflatten(dim=0, sizes=t.shape)
         # assert e.dtype == torch.float32 and e0.dtype == torch.float32
@@ -1243,6 +1250,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 aug_t = torch.zeros_like(t)
             e_clean = self.time_embedding(
                 sinusoidal_embedding_1d(self.freq_dim, aug_t.flatten()).type_as(x))
+            if action_embed is not None:
+                # same F frames as the noisy copy above -> same action_embed
+                e_clean = e_clean + action_embed.flatten(0, 1).type_as(e_clean)
             e0_clean = self.time_projection(e_clean).unflatten(
                 1, (6, self.dim)).unflatten(dim=0, sizes=t.shape)
             e0 = torch.cat([e0_clean, e0], dim=1)

@@ -232,7 +232,8 @@ class WanDiffusionWrapper(torch.nn.Module):
         cache_start: Optional[int] = None,
         viewmats: Optional[torch.Tensor] = None,
         Ks: Optional[torch.Tensor] = None,
-        prope_kv_cache: Optional[List[dict]] = None
+        prope_kv_cache: Optional[List[dict]] = None,
+        action_embed: Optional[torch.Tensor] = None,  # [B, F, dim], per-latent-frame action embedding
     ) -> torch.Tensor:
         prompt_embeds = conditional_dict["prompt_embeds"]
 
@@ -274,6 +275,7 @@ class WanDiffusionWrapper(torch.nn.Module):
                     aug_t=aug_t,
                     viewmats=viewmats,
                     Ks=Ks,
+                    action_embed=action_embed,
                 ).permute(0, 2, 1, 3, 4)
             else:
                 # diffusion forcing or bidirectional

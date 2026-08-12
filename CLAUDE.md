@@ -503,9 +503,54 @@ caption, T5-enkodiran JEDNOM, keširan na disk — tekst više NE nosi akciju).
    loss mora ići skoro na nulu, decode mora vizuelno odgovarati) — jeftina provjera PRIJE trošenja
    GPU sati na dugi trening.
 
-**Sledeći korak (redoslijed, dogovoren):** (1) rezoluciona dijagnostika [U TOKU] → (2) ako prođe,
-pisanje training loop-a sa per-frame action injection → (3) grad-check + overfit-one-batch → (4) pravi
-dugi trening, checkpoint na svakih 250 koraka, action-swap divergence eval na svakom checkpointu.
+**Sledeći korak (redoslijed, dogovoren):** (1) rezoluciona dijagnostika [ZAVRŠENO] → (2) pisanje
+training loop-a sa per-frame action injection [ZAVRŠENO] → (3) grad-check + overfit-one-batch
+[ZAVRŠENO] → (4) pravi dugi trening, checkpoint na svakih 250 koraka, action-swap divergence eval
+na svakom checkpointu [SLEDEĆE].
+
+## IMPLEMENTACIJA training loop-a — ZAVRŠENA, sanity-check PROŠAO (12.08)
+
+**Model surgery** (stvarna izmjena core repo koda, ne samo naš `lora_action/` folder — namjerno,
+malo i additivno, svi novi parametri default `None` tako da se ništa ne mijenja kad se ne koriste):
+- `Wan21/wan_utils/wan_wrapper.py` — `WanDiffusionWrapper.forward()` dobija `action_embed=None`,
+  proslijeđuje ga dalje u `clean_x is not None` (teacher-forcing) granu.
+- `Wan21/wan/modules/causal_model.py` — `_forward_train()` dobija `action_embed=None`; dodaje se na
+  `e` (za noisy/predicted portion, `t`) I na `e_clean` (za context portion, `aug_t`) **PRIJE**
+  `time_projection`, oba puta `action_embed.flatten(0,1)` (isti F frejmova za oba).
+- `Wan21/model/camera_diffusion.py` — `CameraCausalDiffusion.generator_loss()` dobija
+  `action_embed=None`, prosljeđuje ga `self.generator(...)`.
+- **VAŽNO OTKRIVENO PRI TESTU (ne pretpostavljati dim iz class default-a!):** `CausalWanModel`
+  class signature default je `dim=2048`, ALI stvarni checkpoint (`Wan2.1-T2V-1.3B/config.json`)
+  ima `"dim": 1536` — ActionEncoder mora izlaziti u **1536**, ne 2048. Prvi pokušaj je pukao tačno
+  na ovome (`RuntimeError: size 1536 vs 2048`), popravljeno odmah. Pouka: provjeriti runtime
+  vrijednost (config.json), ne class default u kodu.
+
+**Novi fajlovi:**
+- `lora_action/bair_dataset.py` — `BairActionLatentDataset` (proširuje `CameraLatentLMDBDataset`
+  sa `actions` poljem), `_align_to_latent_frames()` (latent 0 = nula, latent i≥1 = raw
+  `actions[4(i-1):4i]` flattened, 16 dim, BEZ prosjeka), `compute_action_stats()` (mean/std,
+  računa se jednom, latent-0 redovi isključeni iz statistike).
+- `lora_action/train_lora_action.py` — glavni loop. `ActionEncoderV2` (16→256→256→1536,
+  zero-init poslednji sloj), odvojen LR (LoRA 1e-4, ActionEncoder 3e-4), action dropout p=0.1
+  (naučeni null embedding, CFG-ready), reuse `generator_loss()` bez izmjene (isti timestep-sampling
+  kod kao uvijek), checkpoint sadrži LoRA+ActionEncoder+null+action stats+optimizer state.
+  `--overfit_single_batch` flag za sanity-check mod (isti batch svaki korak).
+- `lora_action/overfit_visual_check.py` — učita checkpoint, jedan forward na IDENTIČAN batch
+  (bez dropout-a), dekoduje x0_pred i x0 real, sačuva uporedo za vizuelnu provjeru.
+
+**REZULTAT sanity checka (rank=16, batch=8, 300 koraka, overfit na 1 fiksiran batch):**
+- Loss: 0.65 → 0.10 tokom treninga (6.5x pad), eval loss (bez dropout-a) 0.062 — jasan silazan trend
+- Vizuelno (`overfit_visual_check.png`): gdje god je nasumično uzorkovan šum bio nizak (ista
+  napomena kao Test A ranije — evaluacija i dalje uzorkuje šum nasumično, nije fiksiran), predikcija
+  se JASNO poklapa sa pravom scenom (boje, oblici, pozicije robotske ruke) — potvrđuje da model
+  stvarno uči, ne samo da loss brojevi opadaju slučajno.
+- **Cijeli pipeline potvrđen end-to-end:** LMDB → Dataset → action alignment → ActionEncoder →
+  injekcija u AdaLN kanal → LoRA gradijent → VAE decode. Regresija provjerena prije ovoga
+  (`real_training_benchmark.py` i dalje daje identične brojeve kao prije surgery-ja, kad se
+  `action_embed` ne prosljeđuje).
+
+**SLEDEĆE:** pravi dugi trening (2500 iteracija, rank TBD od tima — vidi rank sweep tabelu gore),
+plus action-swap divergence eval (tačka 2 od rizika) prije/uz to.
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
