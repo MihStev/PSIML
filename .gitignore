@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 Causal-Forcing
 Causal-Forcing2/wan_models
+Wan21/wan_models/
 # C extensions
 *.so
 

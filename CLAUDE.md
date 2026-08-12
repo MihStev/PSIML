@@ -65,6 +65,214 @@ ovom kontejneru.** Detalji:
   za kasnije, zavisi koliko je stvarni `Trainer` (`wan_trainer/camera_ar_diffusion.py`) vezan za
   LMDB specifično.
 
+## Action-conditioning — POC USPEŠAN (12.08, jutro), plan iz sinoć koriguje se u detalju
+
+**Ispravka sinoćnjeg nacrta:** `context` NIJE promenljive dužine u praksi — `WanModel.forward()`
+radi sa **fiksnom** dužinom `self.text_len=512` (umt5-xxl, `text_dim=4096`), padding logika za
+promenljivu dužinu je defanzivan no-op kod. Znači ne "produžujemo" sekvencu (kako je sinoć
+planirano), nego **upisujemo action embedding u već postojeći prazan (zero-padded) prostor**
+unutar tih 512 pozicija — BAIR placeholder prompt tokenizuje se na svega **9 tokena**, ima
+ogroman prostor. `context_lens` je svuda već `None` (ne koristi se za maskiranje) — ne treba ga
+dirati.
+
+**Test (`/home/mls10/minWM/lora_action/poc_action_injection.py`, NE throwaway ovaj put, ostaje kao
+osnova za pravi kod):**
+1. `ActionEncoder` MLP (4→256→4096, SiLU), inicijalizovan nasumično
+2. `prompt_embeds[b, seq_lens[b], :] = action_embed[b]` — upis na prvu praznu poziciju posle
+   pravog teksta
+3. LoRA rank=8 (današnji cilj, ne 64) na `q,k,v,ffn.0,ffn.2`: **9.46M trenable parametara**
+4. Jedan pravi trening korak (forward+backward+`optimizer.step()`), i dalje sintetički video
+   latent (BAIR podaci dolaze sledeći korak), ali **prava** text encoder izlaz
+
+**Rezultat — potvrđeno da radi:**
+- `ActionEncoder` gradient norm = **0.0148 (nenula!)** — gradijent stvarno prolazi kroz ceo model
+  nazad do nove MLP mreže, arhitektura je potvrđena, ne samo teoretski ispravna
+- Peak memorija: **14.78GB/15.05GB — praktično identično kao sinoćnji rank-64 test (15.38GB).**
+  Rank LoRA-e skoro ne utiče na memoriju (dominiraju fiksne težine modela: VAE+text-encoder+
+  transformer ~15GB), očekivano.
+- Vreme: 5.2s (brže od sinoćnjih 18.4s — verovatno manje LoRA parametara + topliji keš)
+
+**Sledeći korak — DELIMIČNO ZAVRŠENO (12.08, prepodne):** zameniti sintetički video latent
+PRAVIM BAIR podacima — dataset pipeline plan iz sinoć (TF venv seče prozore → PyTorch venv
+VAE-enkoduje → lagan `Dataset`) ostaje na snazi. Prvi korak (TF venv seče prozore) je urađen:
+
+- `lora_action/extract_bair_windows.py` (ostaje u kodu, NIJE throwaway) čita
+  `/data/bair_robot_pushing_small_tfrecord/2.0.0` preko `tfds.builder_from_directory` i ispisuje
+  sirove (neenkodirane) `(image_main, action)` parove po sekvenci u sharded `.npz` fajlove.
+- Pokrenuto za oba splita: **train (43,264 sekvence → 22 sharda) i test (256 sekvenci → 1 shard)**,
+  izlaz na `/tmp/bair_raw/{train,test}/`, ukupno ~15GB.
+- **VAŽNO — `/tmp` je efemeran** (isti overlay rizik kao `/tmp/local_ckpts`, vidi "Putanje" ispod):
+  nestaje pri restartu kontejnera. Skripta je jeftina za ponovno pokretanje (par minuta) — ne
+  vredi truda da se 15GB sirovih (neenkodiranih) npz-ova trajno čuva; radije re-run skripte na
+  početku nove sesije ako `/tmp/bair_raw` ne postoji.
+- **Preostaje (drugi i treći korak, nezavršeno):** PyTorch venv VAE-enkodiranje ovih npz shard-ova
+  (analogno `build_worldplaygen_lmdb.py`) u LMDB ili lagan `Dataset`/`DataLoader` koji čita
+  direktno — ista otvorena odluka kao gore ("konverzija u format koji Wan21 trener očekuje").
+
+**Flash-attn: ISPRAVKA — IPAK NAM TREBA, ranije pogrešan zaključak.** `Wan21/wan/modules/attention.py`
+ima `attention()` dispatcher sa SDPA fallback-om (to je tačno), ALI `Wan21/wan/modules/model.py`
+(cross-attention u `CausalWanModel`, koja se stvarno koristi za AR/camera trening i inferencu) poziva
+**direktno** `flash_attention()` funkciju iz `attention.py` (ne kroz dispatcher), koja ima tvrd
+`assert FLASH_ATTN_2_AVAILABLE` bez ikakvog fallback-a. Otkriveno tek kad je `run_infer_ar_camera.sh`
+pukao na tom assert-u tokom stvarnog inference pokušaja — teoretska analiza koda unapred nije bila
+dovoljna, trebalo je pokrenuti da se vidi.
+- Build ponovo pokrenut, ovog puta ispravno: `MAX_JOBS=8` (realna cgroup kvota) + ninja/PATH fix
+  (video ranije) + **`FLASH_ATTN_CUDA_ARCHS=80`** (samo A100/SM80, ne i 90/100/120 — seče broj `.cu`
+  fajlova za kompajliranje ~4x, sa 1118 na ~280). Skripta: `/home/mls10/scripts/setup_flash_attn_v2.sh`,
+  log `/home/mls10/logs/setup_flash_attn_v2.log`.
+- **Pravi razlog prethodnog "nema.pristupa" problema nije bio flash-attn sam po sebi nego
+  "I have no name!" UID bag** koji je pucao na drugom mestu (`getpass.getuser()` unutar
+  `torch.compile` cache dir logike, pozvano iz `causal_model.py` na import-u) — rešeno postavljanjem
+  `USER=mls10 LOGNAME=mls10` env varijabli pre pokretanja bilo kog Wan21 training/inference skripta.
+  **Ovo je opšte pravilo za SVE Wan21 skripte, ne samo flash-attn** — dodaj `USER`/`LOGNAME`/`HOME`
+  env vars uvek.
+
+## Gotchas otkriveni pri pokretanju `run_infer_ar_camera.sh` (primenjivo na sve Wan21 inference/training skripte)
+
+1. **`Wan21/wan_models/Wan2.1-T2V-1.3B` simlink obavezan** — kod hardkodira taj put (ne config).
+   `mkdir -p Wan21/wan_models && ln -s /data/ckpts/Wan2.1-T2V-1.3B Wan21/wan_models/Wan2.1-T2V-1.3B`
+   (koristi `/data/ckpts/...` kao target, ne `./ckpts/...` — naši fajlovi su na `/data`).
+2. **`diffusion_pytorch_model.safetensors` (5.68GB, osnovni T2V transformer) MORA biti fizički
+   prisutan** u `wan_models/Wan2.1-T2V-1.3B/`, čak i kad se posle prepisuje teacher-forcing
+   checkpoint-om preko `--checkpoint_path` — `CausalWanModel.from_pretrained()` ga učitava prvo.
+   Već skinut i na `/data/ckpts/Wan2.1-T2V-1.3B/` (dodat naknadno istim rsync obrascem).
+3. **`USER`/`LOGNAME`/`HOME` env vars obavezni** (vidi gore, "I have no name!" bag pogađa
+   `torch.compile`/`getpass.getuser()`).
+4. **`trajectory_path` fajl mora imati >= onoliko linija koliko `data_path` (tekstualni promptovi)
+   ima** — `assert len(trajectory_list) >= num_prompts`. Za brz test sa 2 videa, napravi i skraćeni
+   `data_path` fajl (2 linije) da se poklopi sa skraćenim `trajectory_path` (2 linije).
+5. **Cold-start učitavanje je sporo** (~7 min za VAE 0.5GB + text-encoder 11.36GB + checkpoint 5.96GB
+   + transformer 5.68GB sa `/data` Lustre mounta) — normalno, ne prekidati misleći da je zaglavljeno.
+   Proveri `ps aux` za CPU%/RSS rast, ne samo GPU memoriju (GPU ostaje ~0% dok je sve na CPU strani).
+6. **`OUTPUT_FOLDER` treba da ide na `/tmp` ili sličan non-kvotisan prostor** za test-pokretanja
+   (npr. `/tmp/eval_ar_wan`), ne u repo (`/home/mls10` kvota).
+
+**PyTorch env (`requirements.txt` bez flash-attn): uspešno instaliran**, venv na
+`/home/mls10/venvs/pytorch-minwm`. Spreman za korišćenje.
+
+**Model checkpoint-i: GOTOVO.** Bazni Wan2.1-T2V-1.3B (VAE + text-encoder + config, BEZ osnovnog
+transformera — ne treba nam, koristimo teacher-forcing checkpoint) + `ar_diffusion_tf/model.pt`
+(teacher-forcing, 5.96GB) skinuti ovde preko `hf download`, pa preko login node `rsync`-a (isti
+obrazac kao BAIR) na `/lustre/data/mls10/ckpts/`. Sad vidljivo kao **`/data/ckpts/`** (read-only) u
+svakom kontejneru koji ima dataset attach-ovan. Struktura:
+```
+/data/ckpts/Wan2.1-T2V-1.3B/{Wan2.1_VAE.pth, config.json, models_t5_umt5-xxl-enc-bf16.pth, google/umt5-xxl/*}
+/data/ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt
+```
+Napomena: `diffusion_pytorch_model.safetensors` (osnovni T2V transformer, 5.68GB) je ISPOČETKA bio
+preskočen, ali se ispostavilo da je obavezan (`CausalWanModel.from_pretrained()` ga učitava pre nego
+što se prepiše teacher-forcing checkpoint-om) — naknadno skinut istim obrascem, sad je deo
+`/data/ckpts/Wan2.1-T2V-1.3B/`.
+
+**Lokalni keš checkpoint-a: GOTOVO za ovu sesiju** — `/tmp/local_ckpts/` (22GB, `cp -r` sa `/data/ckpts/`,
+NE `rsync` — taj binarni fajl ne postoji u ovom kontejneru, samo na login node-u). Koristiti
+`CHECKPOINT_PATH`/simlink ka `/tmp/local_ckpts/...` umesto `/data/ckpts/...` za brže učitavanje ubuduće
+u OVOJ sesiji. **Nestaje pri restartu kontejnera** (overlay `/`) — ponoviti
+`cp -r /data/ckpts/. /tmp/local_ckpts/` na početku svake nove sesije, ODMAH, pre prvog test-pokretanja.
+
+## Jupyter kernel — TODO na početku svake nove sesije
+
+Jupyter Lab (isti kontejner, PID 1) podrazumevano ima samo JEDAN kernel: bazni conda Python
+(`/opt/conda/bin/python`), NE naš venv. Dva odvojena problema koja to pravi:
+1. Bazni Python ima svoj `torch==2.13.0+cu130` koji je **polomljen za ovaj hardver** — drajver
+   ovde podržava CUDA 12.8, taj torch traži CUDA 13.0 → `torch.cuda.is_available()` vraća `False`
+   sa jasnom porukom ("NVIDIA driver on your system is too old"). Ne naš bag, zatečeno stanje.
+2. Naš `pytorch-minwm` venv (ispravan `torch==2.9.1+cu128`) nije registrovan kao Jupyter kernel
+   uopšte, pa ga notebook ne nudi kao opciju.
+
+**Fix (uraditi na početku nove sesije ako korisnik radi iz notebook-a, ne samo terminala):**
+```bash
+/home/mls10/venvs/pytorch-minwm/bin/pip install ipykernel
+/home/mls10/venvs/pytorch-minwm/bin/python -m ipykernel install --user --name pytorch-minwm \
+  --display-name "Python (minWM - torch 2.9.1+cu128)"
+```
+Posle toga korisnik u notebook-u bira Kernel → Change Kernel → "Python (minWM - torch 2.9.1+cu128)".
+Registracija ide u `/home/mls10/.local/share/jupyter/kernels/` — proveriti da li preživljava
+restart kontejnera (verovatno da, `.local` je pod `/home/mls10` NFS, ali nije još potvrđeno).
+
+## Mentorov test brzine/memorije (Nedko Savov) — REZULTAT
+
+Pokrenuto `run_infer_ar_camera.sh` sa teacher-forcing checkpoint-om, default rezolucija/dužina iz
+repoa (77 raw frejmova / 20 latentnih, ne naša BAIR skala).
+
+**Brzina** (5 blokova po 4 frejma, autoregressive, KV cache raste): 30s → 37s → 44s → 52s → 59s po
+bloku (usporava sa rastom KV cache-a) = **~222s (3.7min) za ceo video od 20 latentnih frejmova**.
+
+**Memorija — OOM.** Diffusion sampling stigne do **37.6GB / 39.67GB** (skoro cela kartica), pa puca
+na VAE decode koraku (treba dodatnih 7.71GB, ima samo 2.07GB slobodno). **Na default rezoluciji/
+dužini iz repoa, model NE STAJE ceo (sampling + decode) na jednom A100 (40GB).**
+
+**VAŽNA NAPOMENA:** ovo je default konfiguracija repoa (visoka rezolucija/dužina), NE naš stvarni
+cilj (BAIR 64×64, 8-16 frejmova) — gornja granica modela uopšte, ne nužno naš budući memory profil.
+
+**REŠENO retry-em sa `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** — bila je fragmentacija
+memorije, ne stvaran nedostatak prostora. Sa ovim env var-om, ceo test (2 videa, sampling + VAE
+decode) prošao bez greške:
+- **Peak GPU memorija: 38.6GB / 39.67GB (~97%)** — jedva stane, izuzetno tesno, ali radi.
+- **Latencija do prvog denoised chunk-a (bez decode-a):** 29.7s
+- **Ukupno vreme po videu** (svi blokovi + decode, pun ~19-koračni trajectory): ~242s (4 min)
+- Oba mp4 fajla uspešno generisana u `/tmp/eval_ar_wan/`.
+- **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` treba dodati kao standardni env var za SVE
+  buduće Wan21 pokretanja** (inference i trening), ne samo za ovaj test — cena je nula, korist
+  potencijalno sprečava OOM od fragmentacije.
+- **Zaključak za Nedka:** model radi na 1x A100 na default (visoka rezolucija/dužina) konfiguraciji,
+  ali sa vrlo malo margine (~3%). Naš stvarni cilj (BAIR 64×64, 8-16 frejmova) je mnogo manji obim —
+  memorijski otisak bi trebalo da bude drastično niži, verovatno dosta prostora za LoRA trening.
+  Ipak vredi potvrditi na stvarnoj BAIR skali kad dodjemo do toga, ne pretpostavljati.
+
+**ISPRAVKA — `torch.no_grad()` teorija je bila pogrešna, ne samo "nepotrebna".** Prvobitno
+primećeno da `WanDiffusionWrapper.model` (glavni transformer, `wan_utils/wan_wrapper.py:132`) ima
+samo `.eval()`, ne `requires_grad_(False)` — tehnički tačno, ali **irelevantno u praksi**: u
+`wan_inference.py` liniji 76 postoji `torch.set_grad_enabled(False)`, pozvano GLOBALNO na samom
+početku skripte, pre konstrukcije pipeline-a. Gradijenti su bili isključeni za CEO proces od
+starta — moj dodati `with torch.no_grad():` (linija ~259) bio je čist no-op naslagan na već
+globalno isključen autograd, ne "fix" nečega što je bilo pokvareno. **Uklonjen iz koda** (vraćeno
+na originalno stanje) — repo-ov originalni inference kod je ispravan po ovom pitanju, moja
+prvobitna dijagnoza (da fali `no_grad`) bila je netačna, samo se slučajno poklopila sa tim da
+peak memorija zaista ostaje ista (jer NIJE ni bilo šta da se popravi).
+- Umesto toga dodata prava instrumentacija u `wan_inference.py` (minimalna, ne menja ponašanje):
+  baseline VRAM snapshot posle učitavanja modela (`torch.cuda.memory_allocated/reserved`, posle
+  linije ~131, pre `reset_peak_memory_stats`), i `torch.cuda.max_memory_allocated/reserved` na
+  kraju skripte (posle linije ~305) — peak preko cele generacije (oba videa), ispisano kao
+  `[MEM] baseline after model load: ...` i `[MEM] peak during generation: ...`.
+- Sledeći korak je i dalje test na stvarnoj BAIR skali (manja rezolucija → mnogo manji VAE decode
+  tenzori automatski, verovatno bez OOM rizika uopšte).
+
+**Demo (quickstart Wan Action2V inferenca): ODRAĐENO.** DMD checkpoint (`hf download MIN-Lab/minWM
+--include "Wan21/Action2V/dmd/**"`, 5.96GB) skinut direktno na `/tmp/local_ckpts_dmd/` (lokalno,
+bez login-node dance-a — jednokratna upotreba, ne treba trajno na `/data`). Rezultat: chunk0
+latencija 1.22s, peak memorija 27.5GB — potvrđuje "real-time" tvrdnju iz README-a. 2 mp4 fajla
+generisana, upakovana u Artifact (video ugrađen kao base64, samostalan link, ne zavisi od
+kontejnera): https://claude.ai/code/artifact/094e191a-27dc-43ac-bbe9-3d8df7af746d
+
+## Mock trening test na BAIR skali — REZULTAT (ključan nalaz, konačan odgovor Nedku)
+
+Namerno **privremen, throwaway skript** (napisan van `Wan21/`, obrisan posle merenja — ne ostaje
+u kodu). Koristio je **pravu** `CameraCausalDiffusion.generator_loss()` iz `model/camera_diffusion.py`
+(ista funkcija koju stvarni `Trainer.train_one_step` zove), sa `peft` LoRA injektovanom preko
+teacher-forcing checkpoint-a, na **sintetičkim (nasumičnim) tenzorima BAIR oblika** — memorija/
+brzina zavise od oblika tenzora, ne od sadržaja, pa nije trebalo čekati BAIR ekstrakciju.
+
+Konfiguracija testa: batch=1, **16 frejmova** (gornja granica 8-16 cilja, deljivo sa
+`num_frame_per_block=4`), latent **8×8×16kanala** (64×64 piksela / 8x VAE downsample), rank 64
+LoRA na `q,k,v,ffn.0,ffn.2`. Camera (viewmats/Ks) = identity placeholder (BAIR nema kameru, naš
+`action`-conditioning mehanizam još nije dizajniran — ovo samo vežba postojeću arhitekturu dok se
+to ne uradi).
+
+**Rezultati:**
+- LoRA trenable parametri: **75.69M** (rank 64, 5 target modula po bloku)
+- Baseline posle load-a modela + LoRA: 14.76GB allocated / 15.10GB reserved
+- **Peak tokom treninga (forward+backward+optimizer.step()): 15.38GB allocated / 15.43GB reserved**
+  — od 40GB dostupno, **~62% kartice slobodno**
+- Vreme za 1 korak: 18.4s — **napomena: samo JEDAN korak ikad pokrenut, verovatno uključuje
+  jednokratni CUDA "cold start" (kernel odabir/kompajliranje); steady-state vreme po koraku je
+  verovatno niže. Ako treba precizna procena ukupnog trajanja treninga, ponoviti sa 3-5 uzastopnih
+  koraka i uzeti prosek koraka 2+ (izbeći prvi).**
+
+**Zaključak: NE treba manji model.** Na BAIR skali imamo ogromnu memorijsku marginu (15.4GB od
+40GB), potpuno suprotno od tesne situacije na default (832×480) rezoluciji koju smo ranije merili.
+Ovo je konačan odgovor na Nedkovo pitanje o "computationally limited" scenariju.
+
 ## Za sledeću/novu sesiju (ako se kontejner restartuje)
 
 - Ovaj CLAUDE.md (na trajnom `/home/mls10`) učitava se automatski kad je `cwd` unutar
