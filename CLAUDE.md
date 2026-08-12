@@ -570,6 +570,51 @@ plus action-swap divergence eval (tačka 2 od rizika) prije/uz to.
 - Provjereno: `wandb/` folder koji `wandb.init()` pravi lokalno je već u `.gitignore` (linija 171),
   neće se slučajno komitovati.
 
+## TRENING ZAVRŠEN (12.08, 17:20) — rezultat i status generacije
+
+**Trening uspješno završen.** 2500/2500 koraka, 3334s (~56min), final loss **0.1327**,
+avg_recent_loss **0.1263** (stabilan pad sa ~0.61 na početku, platoirao ~0.13-0.16 od pola treninga
+nadalje — zdrav LoRA fine-tuning obrazac). Nula grešaka/NaN kroz cijeli log. Checkpoint
+`/home/mls10/checkpoints/bair_lora/step_2500.pt`. Svih 10 checkpoint-a + puna W&B istorija
+sinhronizovani na https://wandb.ai/sm220315d-etf-/bair-action-lora/runs/9ljziy6w.
+
+## GENERACIJA VIDEA — OTVOREN PROBLEM, treba pravi AR rollout (ne brz fix)
+
+**Cilj:** dat pravu BAIR scenu (početni frejm) + IZABRANU akciju (ne iz dataseta), generisati
+nastavak. Skripta: `lora_action/generate_video.py`.
+
+**Pokušaj #1 (ad-hoc "pogodi x0 → ponovo zašumi → pogodi opet", 5 koraka, fiksni sigma 0.9→0.15):**
+NEUSPJEH. Prvi frejm (pravi kontekst) OK, ostatak degradira u teksturisanu zeleno-tamnu "kašu" bez
+strukture. Latent opseg vrijednosti već sumnjivo širok (-9.7 do 11.4, naspram -3 do 4 u svim ranijim
+testovima koji su denoise-ovali POSTOJEĆI sadržaj, ne generisali iz čistog šuma).
+
+**Pokušaj #2 (prava flow-matching ODE integracija preko `scheduler.step()`, 12 koraka):**
+GORE, ne bolje. Latent vrijednosti **eksplodiraju** monotono kroz korake (-9→-16→-23→-30→-36→-42→
+-48→-54→-59→-64→-68→-70, opadajući ali neubijeni prirast — konvergira ka pogrešnoj/dalekoj tački,
+ne ka normalnom opsegu). Dekodirano: još zasićenije zeleno, potpuno bez strukture.
+
+**Dijagnoza (nije potvrđena, ali najvjerovatnija):** Model je treniran isključivo sa **teacher
+forcing** — `generator_loss()` (i naš training loop) UVIJEK daje modelu i čist kontekst i zašumljenu
+metu ISTOVREMENO, u jednom joint forward prolazu (real ground truth uvijek dostupan za loss).
+Naš pokušaj generacije radi nešto suštinski drugačije: **denoise-uje cijeli blok od 7 budućih
+latentnih frejmova ODJEDNOM iz čistog šuma**, uslovljeno na samo 1 poznat frejm — režim koji model
+nikad nije "vidio" tokom treninga. Prava produkcijska generacija u repou
+(`pipeline/causal_inference.py`, `CausalInferencePipeline`) radi **blok-po-blok, autoregresivno, sa
+KV-cache-om** (`current_start` progresivno raste) — mi to nismo izgradili, samo smo pozajmili
+training funkciju (`generator_loss`/direktan `model.generator()` poziv) za zadatak za koji nije
+namijenjena. **VAŽNA KOMPLIKACIJA:** `CausalInferencePipeline` sam po sebi je dizajniran za
+DISTILOVANE modele sa kratkim `denoising_step_list` (postoji samo u `causal_cd_camera.yaml`,
+`causal_ode_camera.yaml`, `causal_forcing_dmd_camera.yaml` config-ima) — naš `ar_camera_tf.yaml`
+(teacher-forcing, NEdistilovan) ga nema, pipeline se ne može direktno reuse-ovati 1:1, treba
+prilagoditi za pun multi-step diffusion schedule sa KV-cache-om.
+
+**ODLUKA:** ovo NIJE brza popravka (već pokušano dvaput, drugi put pogoršano) — treba prava
+autoregresivna rollout implementacija (blok-po-blok + KV-cache), materijalno veći posao. Poslat
+kontekst jačem modelu (vidi `kontekst_za_jaci_model.md`, ažuriran) za arhitektonski predlog prije
+daljeg kodiranja. **Dokaz da mehanizam (LoRA+ActionEncoder) uopšte radi ostaje overfit vizuelna
+provjera + zdrava loss kriva treninga — generacija je odvojen, dodatni problem, ne dovodi u pitanje
+da li je trening uspio.**
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

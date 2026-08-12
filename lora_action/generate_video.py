@@ -38,8 +38,7 @@ from PIL import Image
 from wan_utils.lmdb_ import get_array_shape_from_lmdb, retrieve_row_from_lmdb  # noqa: E402
 from train_lora_action import ActionEncoderV2  # noqa: E402
 
-FIXED_SIGMAS = [0.9, 0.7, 0.5, 0.3, 0.15]  # 5 steps, starting from ~pure noise this time
-# (more steps than resolution_compare.py's 3, since we start from noise, not a lightly-noised real sample)
+N_INFERENCE_STEPS = 12  # proper flow-matching ODE steps via scheduler.step(), starting from pure noise
 
 # hand-picked "canonical" gripper delta directions for --action left/right/up/down
 # (BAIR action = [dx, dy, ...]; exact scale doesn't matter much, direction does)
@@ -141,23 +140,24 @@ def main():
         .view(1, 1, 3, 3).repeat(1, NUM_FRAMES, 1, 1)
 
     print(f"=== Generating: frame 0 kept as real context, frames 1..{NUM_FRAMES-1} from PURE NOISE ===", flush=True)
+    print(f"=== Proper flow-matching ODE integration via scheduler.step() ({N_INFERENCE_STEPS} steps), "
+          f"NOT the ad-hoc re-noise-the-guess approach (which produced garbage from pure noise) ===", flush=True)
     # keep the real first (context) latent frame; generate the rest from noise
     noise = torch.randn_like(context_latent)
-    current = context_latent.clone()
-    current[:, 1:] = noise[:, 1:]
+    sample = context_latent.clone()
+    sample[:, 1:] = noise[:, 1:]
 
-    for step_i, sigma in enumerate(FIXED_SIGMAS):
-        timestep = torch.full((1, NUM_FRAMES), sigma * model.scheduler.num_train_timesteps,
-                               device=device, dtype=torch.bfloat16)
+    model.scheduler.set_timesteps(N_INFERENCE_STEPS)
+    timesteps_schedule = model.scheduler.timesteps.to(device)
+
+    for i, t_val in enumerate(timesteps_schedule):
+        timestep = torch.full((1, NUM_FRAMES), t_val.item(), device=device, dtype=torch.bfloat16)
         timestep[:, 0] = 0.0  # frame 0 (real context) always at timestep 0 -- it's given, not noisy
-        noisy = model.scheduler.add_noise(
-            current.flatten(0, 1).float(), torch.randn_like(current).flatten(0, 1).float(),
-            timestep.flatten(0, 1).float()
-        ).unflatten(0, (1, NUM_FRAMES)).to(torch.bfloat16)
-        noisy[:, 0] = context_latent[:, 0]  # frame 0 always exactly the real context, never noised
+        sample_in = sample.clone()
+        sample_in[:, 0] = context_latent[:, 0]  # frame 0 always exactly the real context
 
         flow_pred, x0_pred = model.generator(
-            noisy_image_or_video=noisy,
+            noisy_image_or_video=sample_in,
             conditional_dict=conditional_dict,
             timestep=timestep,
             clean_x=context_latent if getattr(model, "teacher_forcing", False) else None,
@@ -166,10 +166,16 @@ def main():
             Ks=Ks,
             action_embed=action_embed,
         )
-        current = x0_pred
-        current[:, 0] = context_latent[:, 0]
-        print(f"[refine step {step_i}] sigma={sigma} x0_pred range="
-              f"({x0_pred.float().min().item():.2f},{x0_pred.float().max().item():.2f})", flush=True)
+        to_final = (i == len(timesteps_schedule) - 1)
+        sample = model.scheduler.step(
+            flow_pred.flatten(0, 1).float(), timestep.flatten(0, 1).float(),
+            sample_in.flatten(0, 1).float(), to_final=to_final,
+        ).unflatten(0, (1, NUM_FRAMES)).to(torch.bfloat16)
+        sample[:, 0] = context_latent[:, 0]
+        print(f"[ODE step {i}] t={t_val.item():.1f} sample range="
+              f"({sample.float().min().item():.2f},{sample.float().max().item():.2f})", flush=True)
+
+    current = sample
 
     def decode(latent):
         x = model.vae.decode_to_pixel(latent.to(device))
