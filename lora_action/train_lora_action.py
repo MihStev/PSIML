@@ -37,9 +37,12 @@ sys.path.insert(0, "/home/mls10/minWM-dawidzard/shared")
 sys.path.insert(0, "/home/mls10/minWM-dawidzard/lora_action")
 os.chdir("/home/mls10/minWM-dawidzard")
 
+import numpy as np
 import torch
 import torch.nn as nn
+import wandb
 from omegaconf import OmegaConf
+from PIL import Image
 from torch.utils.data import DataLoader
 
 from bair_dataset import BairActionLatentDataset, compute_action_stats, ACTIONS_PER_LATENT_DIM  # noqa: E402
@@ -60,6 +63,9 @@ def parse_args():
                     help="sanity check: train on ONE fixed batch repeatedly, loss should -> ~0")
     p.add_argument("--log_every", type=int, default=10)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--wandb_project", default="bair-action-lora")
+    p.add_argument("--wandb_run_name", default=None)
+    p.add_argument("--no_wandb", action="store_true", help="disable W&B (e.g. for quick local debugging)")
     return p.parse_args()
 
 
@@ -89,6 +95,11 @@ def main():
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     print(f"=== CONFIG: {vars(args)} ===", flush=True)
+
+    if not args.no_wandb:
+        run_name = args.wandb_run_name or f"rank{args.rank}_bs{args.batch_size}_{int(time.time())}"
+        wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
+        print(f"=== W&B run: {wandb.run.url} ===", flush=True)
 
     config = OmegaConf.load("Wan21/configs/ar_camera_tf.yaml")
     default_config = OmegaConf.load("Wan21/configs/default_config.yaml")
@@ -225,8 +236,12 @@ def main():
         if step % args.log_every == 0 or step == args.max_steps - 1:
             elapsed = time.time() - t_start
             recent = loss_history[-args.log_every:]
+            avg_recent = sum(recent) / len(recent)
             print(f"[step {step}/{args.max_steps}] loss={loss.item():.4f} "
-                  f"avg_recent={sum(recent)/len(recent):.4f} elapsed={elapsed:.0f}s", flush=True)
+                  f"avg_recent={avg_recent:.4f} elapsed={elapsed:.0f}s", flush=True)
+            if not args.no_wandb:
+                wandb.log({"loss": loss.item(), "avg_recent_loss": avg_recent,
+                           "elapsed_s": elapsed}, step=step)
 
         if (step + 1) % args.checkpoint_every == 0 or step == args.max_steps - 1:
             ckpt = {
@@ -243,6 +258,24 @@ def main():
             torch.save(ckpt, out_path)
             print(f"[checkpoint] saved {out_path}", flush=True)
 
+            if not args.no_wandb:
+                # visual sample: real vs. this step's x0_pred (same batch just used), for
+                # the first item in the batch only -- cheap, gives visual training feedback
+                with torch.no_grad():
+                    def decode(latent):
+                        x = model.vae.decode_to_pixel(latent[:1].to(device))
+                        return ((x.float().clamp(-1, 1) + 1) / 2 * 255).byte()[0].permute(0, 2, 3, 1).cpu().numpy()
+                    real_frames = decode(log_dict["x0"])
+                    pred_frames = decode(log_dict["x0_pred"])
+                    n = min(real_frames.shape[0], pred_frames.shape[0])
+                    grid = np.concatenate([
+                        np.concatenate(list(real_frames[:n]), axis=1),
+                        np.concatenate(list(pred_frames[:n]), axis=1),
+                    ], axis=0)
+                    wandb.log({"sample (top=real, bottom=pred)": wandb.Image(Image.fromarray(grid))}, step=step)
+
+    if not args.no_wandb:
+        wandb.finish()
     print("=== DONE ===", flush=True)
 
 
