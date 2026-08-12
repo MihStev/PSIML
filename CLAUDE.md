@@ -361,6 +361,48 @@ Kontekst iz mail prepiske (avg 2026), da se ne izgubi rezonovanje iza izbora gor
   - Referenca za teacher-forcing (Stage 1) papire: Self Forcing, Causal Forcing.
 - Metrike (PSNR, SSIM, FID preko torchmetrics) — mentor predložio, potvrđeno u prepisci.
 
+## Discord status report (dan 1, uveče) i Nedkov fidbek (dan 2) — akcione stavke
+
+**Poslato Discord grupi (kraj dana 1):** rezime infrastrukture (repo/venv-ovi/flash-attn setup ~26min,
+BAIR 31GB + checkpoint-i 22GB na `/lustre`), stress-test rezultati (38.36GB peak / 29.6s po chunk-u /
+~242s po videu na **default 832×480/77fr rezoluciji repoa, NE na BAIR skali**), DMD smoke-test
+(27.5GB peak / 1.22s latencija, potvrđuje "real-time" tvrdnju), i eksplicitna napomena da mock BAIR
+trening test (throwaway skript, vidi sekciju gore) **NIJE tretiran kao pouzdan benčmark** — samo dodatni
+nalaz, brojevi namerno neobjavljeni dok se ne razume tačno šta skript radi. Generisani demo video-i:
+[Google Drive link](https://drive.google.com/drive/folders/1128EaGWiBHfUyeqCa3Aw-E29Qm4VYYRR?usp=sharing).
+Podela rada dan 1: Mihajlo teorijska strana, Dawidzard infrastruktura/tehnički detalji.
+
+**Nedko Savov (mentor) — odgovor, dan 2:**
+1. **Memorijska zabrinutost:** 38GB peak je **samo inference** (stress-test), sa gradijentima (pravi
+   trening) treba znatno više od "still 2GB slobodno" — na default rezoluciji vjerovatno ne staje.
+   **VAŽNO — ovo se odnosi na default 832×480 rezoluciju, NE na naš stvarni BAIR cilj (64×64, 8-16
+   frejmova)**, gdje mock test već pokazuje ogromnu marginu (15.4GB od 40GB, vidi sekciju gore) — ali
+   to treba potvrditi na **pravom** treningu (real data + real LoRA loop), ne pretpostaviti.
+2. **Predlog — keširanje VAE feature-a:** raditi jedan forward pass kroz dataset unapred i čuvati
+   VAE-enkodirane latente umesto sirovih slika kao ulaz. **Ovo se poklapa 1:1 sa već otvorenim
+   "sledećim korakom"** u našem planu (VAE-enkodiranje BAIR npz shard-ova → LMDB/`Dataset`, vidi
+   sekciju "Action-conditioning" gore) — Nedko potvrđuje pravac, nije novi rad.
+3. **Predlog — gradient checkpointing / activation recompute:** eksplicitno rekao da NE treba
+   implementirati ako već nije deo minWM-a (previše komplikovano), "možda je samo switch". **Provjereno
+   u kodu (12.08): VEĆ POSTOJI I UKLJUČENO PO DEFAULTU.** `Wan21/wan/modules/model.py` i
+   `causal_model.py` imaju `_supports_gradient_checkpointing = True`, stvarno pozivaju
+   `torch.utils.checkpoint.checkpoint(...)` u forward-u; **svi** stage config YAML-ovi
+   (`ar_camera_tf.yaml` itd.) imaju `gradient_checkpointing: true` po defaultu. Akciona stavka za nas:
+   samo osigurati da naš (budući) custom LoRA training loop poziva
+   `wan_wrapper.enable_gradient_checkpointing()` / poštuje taj flag — ne treba ništa novo graditi.
+4. **Procena vremena treninga:** na osnovu naše forward-pass tajminga, **~20-30h wall-clock za 2.5k
+   iteracija**, što Nedko smatra minimumom za vidljivu kontrolabilnost — ali napominje da naš
+   (jednostavniji) dataset možda daje rezultate ranije. Otvoreno, potvrditi empirijski.
+
+**Novi zadaci (dan 2, iz ove diskusije):**
+- [ZAVRŠENO, ispred plana iz reporta] BAIR tar → TFRecord → window-ekstrakcija (`extract_bair_windows.py`)
+- [U TOKU] LoRA fine-tuning implementacija (condition-injection POC gotov, VideoX-Fun referenca kao
+  osnova za training loop, vidi sekciju gore) — glavni tehnički cilj
+- [NOVO] Kad training loop postoji: eksplicitno provjeriti da koristi ugrađeni gradient checkpointing
+  (tačka 3 gore), i uraditi pravi memory/speed test na BAIR skali (ne mock/sintetički) da se potvrdi
+  ili obori Nedkova zabrinutost iz tačke 1
+- [PLANIRANO] Čitanje originalnog minWM paper-a detaljnije (obostrano, teorijska podloga)
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
