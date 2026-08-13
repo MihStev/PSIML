@@ -229,21 +229,57 @@ Sign convention was verified against raw pixels with no model involved: robot-fr
 +x maps to image-left (−8.5 px vs +13.2 px, n=25). Our first labels were inverted;
 the model had the physics right.
 
-## 7. Next
+## 7. Where we would value your opinion
 
-1. **FVD** (Danilo) — done above, as `FVD*` (S3D-based, see caveat in §1).
-2. ~~Metrics on free rollouts~~ — done above (§2 update).
-3. **LoRA on the distilled DMD checkpoint** (Nedko's secondary question) — still
-   open. Worth noting the memory premise does not hold: `model/dmd.py` holds three
-   transformer copies, so real DMD training costs ~3× more, not less; plain LoRA on
-   the DMD checkpoint costs the same as now. The real benefit is inference speed
-   (4 denoising steps vs our 24), which is what would make an interactive demo
-   comfortable rather than clunky (currently 4.5 s per 16-frame block).
-4. **Presentation.**
+We have roughly **1.5 days left**, of which the presentation needs a solid half. That
+realistically leaves **one substantial experiment**, plus one cheap one. We have a
+default in mind but would rather hear you first — all four options are prepared and
+could start tonight.
 
-Deliberately **not** doing: higher-resolution training. The original 512×640 BAIR is
-not publicly available (the Berkeley server hosts only the 64×64 v0 tar, byte-identical
-to our copy, and the tar's own arithmetic confirms 64×64). RoboNet 128 exists but mixes
-four labs' robots and cameras, so it would need filtering and a per-view conditioning
-flag; Bridge's full set is 441 GB. Documented as future work with the VAE-ceiling
-measurement as justification.
+**A. More statistics on what we already have** — *cheap, ~30 min*
+Our per-scene results (rollout depth, direction accuracy) come from a single seed at
+n=32, with ±17% confidence intervals. Multiple seeds and proper error bars would let us
+state which of our differences are real. Also fixes the one-line survivorship-bias
+issue in §2. Low risk, strengthens claims we have already made rather than adding new
+ones.
+
+**B. LoRA on the distilled (DMD) checkpoint** — *~4.5 h, runs overnight*
+Nedko's secondary question, still open. One correction to the original framing: the
+memory premise does not hold — `model/dmd.py` holds three transformer copies, so true
+DMD training costs ~3× more, not less, and plain LoRA on the DMD checkpoint costs the
+same as what we already run. The real benefit is **inference speed**: 4 denoising steps
+instead of our 24, which is what would turn the interactive demo from clunky (4.5 s per
+press) into genuinely real-time.
+Its risk is also its interest: the model was distilled to *skip* steps, and our
+flow-matching loss teaches it to predict the true flow again — i.e. partially undoing
+the distillation. All three outcomes (4-step still works / distillation undone /
+unstable) are reportable findings, so this is a measurement rather than a gamble.
+
+**C. Retrain with `noise_augmentation_max_timestep > 0`** — *~7.6 h, runs overnight*
+The repo's built-in mitigation for exactly the exposure bias we measured in §2; it is
+currently 0 in our config. One config line. Would plausibly extend usable rollout depth
+beyond one block, but by an unknown amount, and it costs the same night as B.
+
+**D. Stop experimenting and put everything into the presentation.**
+We already have a complete result: action conditioning verified on held-out data in
+both axes, a full metric sweep, the VAE ceiling, and a measured degradation curve.
+Nothing below depends on further runs.
+
+**Our default if we do not hear otherwise: A tonight (cheap, tightens existing claims),
+then B overnight, then D tomorrow.** We are choosing B over C because it answers a
+question you posed and produces a demo asset, whereas C improves a secondary property
+we are already reporting honestly as a limitation.
+
+**One thing we are deliberately not doing:** higher-resolution training. The original
+512×640 BAIR is not publicly available — the Berkeley server hosts only the 64×64 v0
+tar, byte-identical to our copy, and the tar's own arithmetic confirms 64×64. RoboNet
+128 exists but mixes four labs' robots and cameras, so it would need filtering and a
+per-view conditioning flag; Bridge's full set is 441 GB. Documented as future work,
+with the VAE-ceiling measurement (§4) as the quantitative justification.
+
+**Also open, if you have a view:** for the 10-minute presentation, is the more useful
+headline (a) action conditioning works in 2D on unseen scenes, (b) control and fidelity
+converge on *different* timescales — control saturates at ~32k samples while fidelity
+improves throughout, or (c) the autoencoder, not the model, sets the quality ceiling at
+this resolution? We lean towards (b) as the least obvious and most transferable, with
+(a) as the foundation and (c) as the bridge to future work.
