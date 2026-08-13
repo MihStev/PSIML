@@ -121,6 +121,12 @@ Dekodiranje **pravog** latenta nazad u piksele daje **22.74 dB**. To je tvrda gr
 - Napisan **naš README** — originalni minWM-ov sačuvan zasebno.
 - Izvještaj za oba mentora, duga i kratka verzija (ispod 2000 karaktera za Discord).
 
+### Veče dana 3 — organizacija i predaja
+- **Videi podijeljeni mentorima** preko Google Drive-a, u tri foldera: glavni rezultat (ista scena, četiri komande), ograničenja (dekompozicija zamućenja + degradacija rollout-a), demo (interaktivni niz + programi akcija). Folder sa ograničenjima uključen namjerno — pokazuje da znamo gdje su granice.
+- **Razgovor sa mentorkom:** rezultat djeluje antiklimaktično, ali to vjerovatno dolazi iz nesklada između intelektualnog i vizuelnog utiska, a ne iz kvaliteta rada. Predložila je variranje veličine parametara i dimenzije latentnog prostora — imamo mjerenja koja to preduhitruju: **rank sweep (8/16/64) je pokazao da kapacitet adaptera nije usko grlo**, a dimenzija latentnog prostora je fiksirana VAE-om (`z_dim=16`), pa bi njena promjena tražila novi VAE. Usko grlo je izmjereno i strukturno: VAE plafon.
+- **Tehnički gotcha dana:** `ipykernel` 7 lomi `ipywidgets` 8 — dugmad se ne renderuju bez ikakve greške, i ni promjena browsera ni hard refresh ne pomažu jer je problem prije browsera. Spušteno na 6.31.0. Usput napisan i fallback demo bez widgeta (`go('up')` umjesto klika).
+- **Higijena GPU-a:** Jupyter kernel sa učitanim modelom drži ~15 GB i kad ništa ne radi; `torch._inductor` ostavi ~30 compile radnika. Bitno kad dvoje dijeli jednu karticu i jedan nalog.
+
 ---
 
 ## Gdje smo i šta dalje
@@ -136,9 +142,16 @@ Dekodiranje **pravog** latenta nazad u piksele daje **22.74 dB**. To je tvrda gr
 
 Ne stajemo jer smo ostali bez ideja, nego jer smo **izmjerili gdje su granice** i većina ih je strukturna.
 
-**Preostalo:**
-1. Odgovor mentora na tri ponuđene opcije (više statistike / DMD / konsolidacija)
-2. **Prezentacija** — 10 minuta, ~10 slajdova, skica postoji; demo ide rano, ne kao kruna na kraju
-3. Proba izlaganja, dvaput, sa mjerenjem vremena
+**Plan za preostala dva dana:**
 
-**Trenutno stanje:** ništa ne radi, GPU slobodan, sve na `main`. `CLAUDE.md` je ~1300 linija i nosi svaku odluku sa obrazloženjem.
+| kada | šta |
+|---|---|
+| veče dana 3 | statistika na više podataka (Mihajlo), pa **DMD fine-tuning preko noći** |
+| dan 4 | testovi i debug DMD-a, rezultati, **izrada prezentacije**, dublje upoznavanje sa kodom |
+| dan 5 | završetak, proba izlaganja dvaput sa mjerenjem vremena, peglanje |
+
+**Prezentacija:** 10 minuta, 5 minuta pitanja, ~10 slajdova. Skica postoji. Dvije vodilje: demo ide **rano** (ne kao kruna na kraju — ako ponestane vremena, bolje izgubiti zaključak nego demo), a ograničenja se prijavljuju sa **izmjerenim brojevima**, jer to djeluje ozbiljnije nego prećutati ih.
+
+**Za upoznavanje sa kodom** (najkraći put, ~2 sata): `bair_dataset.py` (81 linija, nosi ključnu odluku o poravnanju akcija) → `git diff a31b657 -- Wan21/` (cijela naša izmjena repo koda, 15 linija) → `train_lora_action.py` (srce svega) → `CLAUDE.md` (za "zašto" umjesto "kako").
+
+**Trenutno stanje:** GPU slobodan, sve na `main`, `CLAUDE.md` ~1350 linija sa svakom odlukom i obrazloženjem.
