@@ -75,6 +75,9 @@ def parse_args():
     p.add_argument("--skip_fid", action="store_true")
     p.add_argument("--out_json", default="/home/mls10/logs/eval_results.json")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--base_checkpoint", default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt")
+    p.add_argument("--dmd_schedule", action="store_true",
+                    help="use the distilled model's own 4-step schedule (config denoising_step_list\n                          [1000,750,500,250], warped through the 1000-step sigma schedule) instead\n                          of set_timesteps(--n_steps); required for a fair few-step DMD test")
     return p.parse_args()
 
 
@@ -113,7 +116,8 @@ def main():
 
     print("=== Loading base model (ONCE; checkpoints are swapped in place) ===", flush=True)
     model = CameraCausalDiffusion(config, device=device)
-    base = torch.load("/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt", map_location="cpu")
+    print(f"=== base checkpoint: {args.base_checkpoint} ===", flush=True)
+    base = torch.load(args.base_checkpoint, map_location="cpu")
     gen_sd = base.get("generator_ema", base.get("generator"))
     try:
         model.generator.load_state_dict(gen_sd)
@@ -144,8 +148,18 @@ def main():
     print(f"=== Test split: using {n_total} of {lat_shape[0]} held-out scenes | "
           f"frames 0..{n_ctx-1} = context, {n_ctx}..{NUM_FRAMES-1} generated ===", flush=True)
 
-    model.scheduler.set_timesteps(args.n_steps)
-    schedule = model.scheduler.timesteps.to(device)
+    if args.dmd_schedule:
+        # reproduce causal_forcing_dmd_camera.yaml: denoising_step_list is a list of INDICES
+        # warped through the full 1000-step (shifted) schedule, not raw timestep values
+        model.scheduler.set_timesteps(1000)
+        full = torch.cat((model.scheduler.timesteps.cpu(), torch.tensor([0.0])))
+        schedule = full[[1000 - i for i in (1000, 750, 500, 250)]].to(device)
+        model.scheduler.sigmas = (schedule.cpu() / model.scheduler.num_train_timesteps)
+        model.scheduler.timesteps = schedule.cpu()
+        print(f"=== DMD 4-step schedule: {[round(float(t),1) for t in schedule]} ===", flush=True)
+    else:
+        model.scheduler.set_timesteps(args.n_steps)
+        schedule = model.scheduler.timesteps.to(device)
 
     psnr_m = ssim_m = fid_m = None
     try:
