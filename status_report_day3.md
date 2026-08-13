@@ -12,19 +12,23 @@ Inception features, so a video with individually realistic frames but jittery or
 physically wrong motion scores well. Our entire claim is about *motion* (action →
 displacement), so FID is measuring the one thing we are not really testing.
 
-**Status: not yet implemented.** It is not in `torchmetrics`, so it needs an I3D
-(Kinetics-pretrained) backbone pulled in separately. Planned for day 4.
+**Status: implemented and used the same day** — results in section 2 below, where it
+immediately earned its place.
 
-Two caveats we will state alongside the number rather than let them pass silently:
-- FVD, like FID, is a distribution distance and normally uses hundreds to thousands
-  of videos. We have **256 held-out episodes**, so the absolute value will not be
-  comparable to published numbers.
-- Standard FVD implementations resize to 224×224 for I3D. Our frames are **64×64**,
-  so most of what I3D sees will be upsampling artifacts. We will report it as a
-  **relative** measure between our own checkpoints only.
+Implementation note and its limits, stated up front rather than buried: canonical FVD
+uses a specific Kinetics-pretrained I3D checkpoint that we could not install in this
+environment (no package available through our proxy), so we use torchvision's **S3D** —
+also Kinetics-400, architecturally the successor to I3D — and take the Fréchet distance
+over its 1024-dim features. We therefore label it **FVD\***, not FVD:
 
-Same caveat already applies to our FID (~1024 frames per checkpoint), and we report
-it that way.
+- Different backbone, so not numerically comparable to published FVD.
+- A distribution distance normally computed over hundreds to thousands of videos; we
+  have **256 held-out episodes**.
+- The network expects 224×224 and our frames are **64×64**, so much of what it sees is
+  upsampling artifact.
+
+**Valid as a relative measure between our own conditions only.** The same caveat
+already applies to our FID (~1024 frames per checkpoint) and we report it that way.
 
 ## 2. Danilo: "Is every generation so far teacher-forced? Do we have free rollouts?"
 
