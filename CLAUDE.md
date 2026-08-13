@@ -992,6 +992,53 @@ Tokom ovog projekta sam **PET puta** prerano proglasio plato/konvergenciju — n
 Sve odluke o prekidu treninga koje sam htio donijeti bile bi štetne — final checkpoint (8000) je
 ispao najbolji po vjernosti.
 
+## CFG (classifier-free guidance) — TESTIRAN, NE ISPLATI SE (13.08, 13:05)
+
+Trenirali smo null action embedding kroz action dropout (p=0.1) baš da bi CFG bio dostupan, pa ga
+nikad nismo iskoristili. `lora_action/cfg_test.py`, sweep na 32 neviđene scene, checkpoint 8000,
+isti šum kroz sve jačine. Rezultati u `lora_action/cfg_sweep_results.json`.
+
+```
+    w    PSNR    SSIM     div   smj_rel  smj_aps
+  1.0   19.21  0.7974   43.05    100%     87.5%     <- obično uzorkovanje
+  1.5   19.01  0.7908   43.24    100%     87.5%
+  2.0   18.85  0.7822   44.10    100%     89.1%
+  3.0   18.33  0.7606   45.42    100%     92.2%
+```
+
+**Radi tačno kako teorija predviđa** — monotona razmjena: jače kondicioniranje → jača kontrola,
+slabija vjernost, kurs ~1:1 (+5.5% divergencije / +5.4% aps. smjera za −4.6% PSNR i SSIM).
+
+**ODLUKA: generisati BEZ CFG-a (w=1.0).** Ne zato što ne radi, nego zato što nemamo šta dobiti —
+relativna tačnost smjera je **već 100% na w=1.0**, pa CFG pojačava kontrolu koja je zasićena, a
+naplaćuje vjernošću I dvostrukim računanjem (dva forward prolaza po koraku). Jedina niša: ako bi
+za demo bilo bitno da SVAKI pojedinačni klip nedvosmisleno ide u pravom smjeru, w=2.0 podiže
+`dir_abs` 87.5% → 89.1% uz umjeren trošak.
+
+Napomena: `w=1.0` daje div=43.05 naspram 43.78 iz pune evaluacije na istom checkpointu — potvrda
+da skripta radi ispravno. (PSNR je viši, 19.21 vs 18.40, jer koristi prvih 32 scene umjesto 64;
+poređenje je validno UNUTAR sweep-a, ne prema tabeli pune evaluacije.)
+
+## VIZUELNA DEKOMPOZICIJA ZAMUĆENJA — gdje se gubi oštrina
+
+`lora_action/cfg_visual.py` slaže u jednu sliku: sirovi pikseli → VAE round-trip pravog latenta →
+generisano na više w. Izlaz: `/home/mls10/logs/cfg_visual/cfg_zoom_idx3.png` (uveličano 8x).
+
+**Nalaz (vizuelno, potvrđuje mjerenje od 22.74 dB):**
+- **Najveći pad je sirovi → VAE**, a to je SAVRŠENA rekonstrukcija bez ikakvog generisanja. U
+  sirovom su ivice oštre i natpis na ruci čitljiv; već u VAE redu sitni predmeti se stapaju.
+  **Dominantni uzrok zamućenja je autoenkoder na 64×64, ne model.**
+- **VAE → generisano je MANJI pad** nego prvi. Model gubi manje nego autoenkoder.
+- **CFG POGORŠAVA vizuelno:** kroz w=1→2→3 raste zasićenost i pojavljuje se obojena aureola po
+  ivicama (roze/magenta), plus šum na w=3.0. Tih artefakata NEMA u sirovim pikselima ni u VAE redu.
+
+**Odbačena metrika:** "oštrina" kao prosječni gradijent NE VALJA ovdje — generisano je imalo veći
+gradijent (32.6) od VAE plafona (31.5), što je nemoguće za pravi detalj. Gradijentna energija mjeri
+lokalnu varijaciju, pa je artefakti podižu jednako kao detalj. Ne koristiti je.
+
+**Posljedica za prioritete:** ovo je tvrd, vizuelan argument da nema smisla ulagati u model dok je
+plafon ovoliko nizak — veća rezolucija podiže PLAFON, sve ostalo se bori za ostatak.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
