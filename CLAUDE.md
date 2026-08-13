@@ -1311,6 +1311,66 @@ frontenda, i za prezentaciju je čak čitljiviji jer se vidi ŠTA se komanduje.
 - **DMD fine-tuning POKRENUT 13.08 u 21:54 lokalno** (vidi sekciju "DMD TRENING" niže).
 - Sutra: testovi, debug, rezultati, prezentacija, dublje upoznavanje sa kodom.
 
+## PLAN ZA DAN 4 i 5 — objedinjen (napravljen 13.08 uveče)
+
+**Ograničenje koje diktira sve:** jedna A100 **40GB**, zauzeće 16.7 GB po poslu, iskorišćenost
+~45% (mjereno: 25/34/40/57/60%). Znači **tačno DVA GPU posla paralelno** (33.4/40 GB), nikad
+tri. Iskorišćenost je niska jer 8×8 latenti daju prekratke sekvence — zato paralelizacija
+ovdje stvarno donosi dobitak, za razliku od uobičajenog slučaja.
+
+**Noćas (bez GPU-a, ~1 h):** napisati sve četiri skripte da ujutru samo pokrećemo:
+1. plumbing za `--noise_aug` u `train_lora_action.py` (~3 linije — mehanizam JESTE živ u našoj
+   putanji, `camera_diffusion.py:65` unutar `generator_loss()`, ali vrijednost se čita preko
+   `getattr(args, ..., 0)` i naš argparse je uopšte ne izlaže; ranija tvrdnja "samo jedna
+   zastavica, bez koda" je bila netačna)
+2. `action_pca.py` — CPU
+3. `action_calibration.py` — sweep jačine
+4. `radial_figure.py` — figura za prezentaciju
+
+**Dan 4** (DMD trening gotov ~05:35; 3.42 s/korak mjereno):
+
+| vrijeme | GPU slot 1 | GPU slot 2 | mimo GPU-a |
+|---|---|---|---|
+| 08:00 | **B: noise-aug trening, 4000 koraka** (ne 8000 — kontrola se zasićuje na 1000; 4000 daje i pošteno poređenje na istom broju koraka protiv `bair_lora_big/step_4000.pt`) | **A: evaluacija DMD-a**, i sa 4 i sa 24 koraka | PCA (~30 min) |
+| ~09:30 | B se nastavlja | **1: kalibracija jačine** (~2 h) | |
+| ~11:30 | B se nastavlja | **3: radijalna figura** (~1 h) | |
+| ~13:00 | B gotov (~4.5–5 h dijeleći karticu) | rollout eval noise-aug modela (~45 min) | |
+| 13:00–14:00 | | | objediniti rezultate, ažurirati kontekst, commit+push |
+| 14:00–19:00 | slobodno | | **izrada prezentacije** |
+
+**Dan 5:** dovršiti slajdove, uklopiti zakasnjele rezultate, **dvije probe sa mjerenjem
+vremena**, peglanje.
+
+**TVRDO PRAVILO:** šta god nije gotovo do **dana 4 u 18:00** — reže se. Prezentacija je jedina
+stavka koja se NE smije žrtvovati. Bolje čist projekat dobro ispričan nego još jedan rezultat
+koji niko nije stigao da izloži.
+
+**Zašto baš ova četiri dodatka (svaki daje izvještajan rezultat u OBA smjera):**
+- **Kalibracija jačine** — najveći dobitak. Testirali smo samo 4 diskretna smjera pri jednoj
+  jačini (`D=0.07` = 1.73σ). Ne znamo da li je model naučio PRESLIKAVANJE ili 4 zapamćena
+  režima. Sweep `0.25D…3D` + mjerenje pomaka u pikselima. Ako je monotono/linearno → tvrdnja
+  postaje "kontinuirano kalibrisano preslikavanje koje ekstrapolira izvan trening jačina".
+  Ako je ravno → model je diskretizovao akcije, jednako vrijedan nalaz. Uz to dijagonalne
+  akcije (dx i dy istovremeno) — nikad testirano, sve mjereno je bilo po osama.
+- **PCA action encodera** — jedini pogled UNUTAR modela; sve ostale mjere su spolja. Ako se
+  pojavi glatka 2D površ poravnata sa dx/dy, mreža je sama otkrila geometriju zadatka.
+- **Radijalna figura** — 8 komandi oko zajedničkog konteksta, ruka se lepezasto razilazi.
+  Saopštava projekat u dvije sekunde bez tabele.
+- **noise-aug** — jeftina djelimična zamjena za fazu 2 koju ne možemo priuštiti (self-forcing
+  bi bio 15–30 s/korak → 30+ h). Ako rollout izdrži dublje → poboljšanje sa mjerom. Ako ne →
+  izmjeren argument da je za to zaista potreban self-forcing, što je jače od "nismo stigli".
+
+**Odbačeno i zašto:** treniranje faze 2 (30+ h, ne staje); treniranje faze 3 (ne treba —
+objavljeni `dmd` checkpoint JESTE njen proizvod; uz to `camera_dmd.py` drži TRI transformera
+— `generator` trenira se, `real_score` zamrznut, `fake_score` trenira se — dvije mreže koje se
+uče jedna protiv druge, plus `assert use_camera is True` bi tražio novu hirurgiju); ponovno
+anchor-ovanje pravim frejmovima u dugom rollout-u (BAIR epizoda ima 30 frejmova, pravih
+frejmova dalje NEMA — nemoguće, ne skupo); druga kamera (već provjerena i odbačena).
+
+**Zašto paralelni posao NIJE pušten sinoć uz DMD:** ista aritmetika (33.4/40 GB, margina
+6.6 GB), ali različita cijena greške — sinoć bi OOM ubio DMD trening koji se ne može ponoviti
+(nema druge noći), ujutru ubija evaluaciju (ponovljiva) i dodatak.
+
 ## MONTE CARLO STATISTIKA SLOBODNOG ROLLOUT-a — 256 pokušaja, NASUMIČNE akcije (13.08, veče, Mihajlova sesija)
 
 Nova skripta, `lora_action/rollout_metrics_mc.py`, nadograđuje `rollout_metrics.py`: umjesto
