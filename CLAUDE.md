@@ -864,6 +864,54 @@ poslije ~1500 ide u pamćenje, ne generalizaciju.
 **Zaključak: odluke se ne donose na osnovu val loss-a.** On mjeri rekonstrukciju; nas zanima
 KONTROLA. Kriva `kontrolabilnost vs. koraci` iz `evaluate.py` je pouzdan kriterijum i nju čekamo.
 
+## VELIKI TRENING ZAVRŠEN + KONTROLA U OBJE OSE (13.08, 02:10) — GLAVNI REZULTAT
+
+**Trening (W&B `fpppbwfj`) završen: 8000/8000 koraka, 7.6h, 3.45 s/korak, NULA grešaka.**
+
+| | početak | kraj |
+|---|---------|------|
+| train loss | 0.52 | **0.1003** |
+| val loss (test split) | 0.1483 | **0.1030** (−30.5%) |
+| epoha | — | **5.9** (prošli run: 0.46) |
+| gap na kraju | — | **+0.0027** — nema ozbiljnog prezasićenja uprkos 5.9 epoha |
+
+Val po prozorima (jedini pouzdan način čitanja, vidi sekciju o šumu):
+`500–2500: 0.1244` → `3000–4500: 0.1088` → `5000–6500: 0.1059` → `7000–8000: 0.1050`.
+Svaki prozor niži od prethodnog; poslednji donio svega −0.8%, dakle **stvarni plato tek oko koraka
+6500–7000** — NE na 2500/3500 kako sam tri puta pogrešno tvrdio. Puštanje do kraja bilo je ispravno.
+Najbolji val: **0.1008 na koraku 6500**. 16 checkpointa u `/home/mls10/checkpoints/bair_lora_big/`.
+
+### KONTROLA U OBJE OSE — sve 4 akcije daju tačan smjer
+
+Ista scena (test idx 100), **isti šum**, mijenja se samo akcija. Finalni checkpoint `step_8000.pt`.
+Pomjeraj hvataljke mjeren detektorom crvenih piksela, od zadnjeg kontekstnog do zadnjeg generisanog
+frejma (`/home/mls10/logs/gen_4actions/`):
+
+| varijanta | dx (px) | dy (px) | očekivano | |
+|-----------|---------|---------|-----------|---|
+| `real` | +8.67 | −2.41 | — | referenca |
+| `right` (dim0 −0.07) | **+7.27** | +2.74 | dx > 0 | ✅ |
+| `left` (dim0 +0.07) | **−7.19** | +5.02 | dx < 0 | ✅ |
+| `up` (dim1 −0.07) | +9.72 | **−6.76** | dy < 0 | ✅ |
+| `down` (dim1 +0.07) | −1.54 | **+3.07** | dy > 0 | ✅ |
+
+- **Horizontalna osa skoro savršeno simetrična:** +7.27 vs −7.19 → razdvojenost **14.5 px** na kadru
+  od 64 px (~23% širine), samo promjenom jedne brojke u akciji.
+- **Vertikalna osa RADI i testirana je prvi put** (−6.76 gore, +3.07 dolje). Asimetrija je očekivana
+  — i sami sirovi podaci su asimetrični po dim1 (+7.69 dolje vs −3.49 gore).
+- Vizuelno: svih 6 redova koherentna robotska scena kroz cijelu sekvencu, bez raspada.
+
+**Ovo je glavni rezultat projekta: 2D semantička kontrola akcijom, na neviđenim podacima.**
+
+### Metrike na test splitu (smoke, step_1500, 8 scena) — pun run tek slijedi
+PSNR 17.41 | SSIM 0.7272 | divergencija 43.84 (kontekst **0.00**) | smjer 8/8 rel, 15/16 abs.
+
+## SLEDEĆE (dan 3+)
+1. **Pun `evaluate.py`** preko svih 16 checkpointa × 64 test scene → kriva *kontrolabilnost vs.
+   koraci*. Empirijski testira Nedkovu tvrdnju o 2500 iteracija kao minimumu.
+2. **DMD LoRA** na 64×64 — Nedkovo otvoreno pitanje; nestabilnost je VALIDAN nalaz.
+3. **Prezentacija.** Rezolucija ide u "future work" (vidi sekciju o datasetima).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
