@@ -1039,6 +1039,51 @@ lokalnu varijaciju, pa je artefakti podižu jednako kao detalj. Ne koristiti je.
 **Posljedica za prioritete:** ovo je tvrd, vizuelan argument da nema smisla ulagati u model dok je
 plafon ovoliko nizak — veća rezolucija podiže PLAFON, sve ostalo se bori za ostatak.
 
+## OTVORENO — neusklađenost dim 2/3 u `generate_sequence.py` demo skripti (13.08, ~12:00, NERIJEŠENO)
+
+**Napomena o dvostrukom klonu:** tim radi paralelno iz dva klona istog repoa —
+`/home/mls10/minWM` (ova sesija) i `/home/mls10/minWM-dawidzard` (Dawidzardova sesija). Oba su na
+istom HEAD-u (`b09a61f`, commit gore o CFG-u/vizuelnoj dekompoziciji). Ovaj nalaz je nastao u
+`minWM-dawidzard`, kao NECOMMIT-OVANA izmjena — **kopirana u ovaj klon 13.08 (kasnije istog dana),
+ali i dalje necommit-ovana ovdje takođe** (`git status` će pokazati `M lora_action/generate_sequence.py`
+dok se ne odluči da li fix valja i ne uradi commit).
+
+**Šta je nađeno:** `generate_sequence.py`-eva provjera "da li se program obrnuo" (npr.
+`up_then_down`) je bila pogrešna — provjeravala je samo da li se predznak POMJERAJA promijenio
+između polovina klipa, ne da li je svaka polovina stvarno išla u KOMANDOVANOM smjeru. Stara verzija
+je zato prijavljivala "5/6 reversal seen" dok je zapravo većina polovina išla u pogrešnom smjeru.
+Ispravljeno: nova provjera gleda per-polovina da li je stvarni pomjeraj u očekivanom smjeru
+(`want = {"up": (1,-1), "down": (1,+1), "right": (0,+1), "left": (0,-1)}`), broji tačne/ukupno.
+Dodat i `--real_dims23` flag za ablaciju (vidi ispod).
+
+**Ablacija** (`/home/mls10/logs/ablation.log`, 13.08 11:56-12:05, jedna scena `context_idx=3`,
+6 programa × 2 polovine = 12 mjerenja):
+
+```
+A) konstantne dim 2/3 (dataset mean 0.5/0.25 — ovako rade generate_sequence.py i rollout.py DANAS):
+   correct halves: 10/12 (83%)
+B) prave dim 2/3 epizode (ovako radi evaluate.py, zvanična evaluacija iznad):
+   correct halves: 5/12 (42% — jedva iznad slučajnosti)
+```
+
+**Zašto je ovo ozbiljno:** puna evaluacija gore (16 checkpointa × 64 scene, `dir_rel` 98-100% od
+koraka 1000) koristi PRAVE dim 2/3 — isti uslov kao (B) ovdje, ali (B) pokazuje mnogo slabiju
+kontrolu na ovom užem testu. Dvije mjere kontrole se ne slažu pod istim uslovom.
+
+**Ograde, NE zaključivati prerano (vidi "NAUČENO O SOPSTVENOM RASUĐIVANJU" gore — ista greška bi
+bila peti-šesti put):** samo JEDNA scena, samo 12 mjerenja — premali uzorak da se sa sigurnošću
+kaže je li ovo pravi signal ili šum. `evaluate.py`-eva metodologija (usrednjeno preko 64 scene, isti
+šum kroz varijante, action-swap divergencija kao primarna mjera) je pouzdanija od ovog brzog
+ablacionog testa na jednoj sceni — **ne obarati glavni rezultat na osnovu ovoga**, ali ni ne
+ignorisati dok se ne provjeri na više scena.
+
+**NIJE dirano:** `rollout.py` i `interactive_demo.ipynb` (izgrađen na `rollout.py`-evom mehanizmu)
+i dalje koriste konstantne dim 2/3 — nisu ponovo validirani protiv ovog nalaza.
+
+**Sljedeći korak:** ponoviti ablaciju (A) vs (B) na više scena (ne samo idx=3) da se odvoji signal
+od šuma; ako se (B)-slabost potvrdi na više scena, prenijeti `--real_dims23` pristup i na
+`rollout.py`/notebook; tek onda commit-ovati `generate_sequence.py` izmjenu.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
