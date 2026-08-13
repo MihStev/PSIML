@@ -1039,6 +1039,68 @@ lokalnu varijaciju, pa je artefakti podižu jednako kao detalj. Ne koristiti je.
 **Posljedica za prioritete:** ovo je tvrd, vizuelan argument da nema smisla ulagati u model dok je
 plafon ovoliko nizak — veća rezolucija podiže PLAFON, sve ostalo se bori za ostatak.
 
+## OTVORENO — neusklađenost dim 2/3 u `generate_sequence.py` demo skripti (13.08, ~12:00, NERIJEŠENO)
+
+**Napomena o dvostrukom klonu:** tim radi paralelno iz dva klona istog repoa —
+`/home/mls10/minWM` (ova sesija) i `/home/mls10/minWM-dawidzard` (Dawidzardova sesija). Oba su na
+istom HEAD-u (`b09a61f`, commit gore o CFG-u/vizuelnoj dekompoziciji). Ovaj nalaz je nastao u
+`minWM-dawidzard`, kao NECOMMIT-OVANA izmjena — **kopirana u ovaj klon 13.08 (kasnije istog dana),
+ali i dalje necommit-ovana ovdje takođe** (`git status` će pokazati `M lora_action/generate_sequence.py`
+dok se ne odluči da li fix valja i ne uradi commit).
+
+**Šta je nađeno:** `generate_sequence.py`-eva provjera "da li se program obrnuo" (npr.
+`up_then_down`) je bila pogrešna — provjeravala je samo da li se predznak POMJERAJA promijenio
+između polovina klipa, ne da li je svaka polovina stvarno išla u KOMANDOVANOM smjeru. Stara verzija
+je zato prijavljivala "5/6 reversal seen" dok je zapravo većina polovina išla u pogrešnom smjeru.
+Ispravljeno: nova provjera gleda per-polovina da li je stvarni pomjeraj u očekivanom smjeru
+(`want = {"up": (1,-1), "down": (1,+1), "right": (0,+1), "left": (0,-1)}`), broji tačne/ukupno.
+Dodat i `--real_dims23` flag za ablaciju (vidi ispod).
+
+**Ablacija** (`/home/mls10/logs/ablation.log`, 13.08 11:56-12:05, jedna scena `context_idx=3`,
+6 programa × 2 polovine = 12 mjerenja):
+
+```
+A) konstantne dim 2/3 (dataset mean 0.5/0.25 — ovako rade generate_sequence.py i rollout.py DANAS):
+   correct halves: 10/12 (83%)
+B) prave dim 2/3 epizode (ovako radi evaluate.py, zvanična evaluacija iznad):
+   correct halves: 5/12 (42% — jedva iznad slučajnosti)
+```
+
+**Zašto je ovo ozbiljno:** puna evaluacija gore (16 checkpointa × 64 scene, `dir_rel` 98-100% od
+koraka 1000) koristi PRAVE dim 2/3 — isti uslov kao (B) ovdje, ali (B) pokazuje mnogo slabiju
+kontrolu na ovom užem testu. Dvije mjere kontrole se ne slažu pod istim uslovom.
+
+**Ograde, NE zaključivati prerano (vidi "NAUČENO O SOPSTVENOM RASUĐIVANJU" gore — ista greška bi
+bila peti-šesti put):** samo JEDNA scena, samo 12 mjerenja — premali uzorak da se sa sigurnošću
+kaže je li ovo pravi signal ili šum. `evaluate.py`-eva metodologija (usrednjeno preko 64 scene, isti
+šum kroz varijante, action-swap divergencija kao primarna mjera) je pouzdanija od ovog brzog
+ablacionog testa na jednoj sceni — **ne obarati glavni rezultat na osnovu ovoga**, ali ni ne
+ignorisati dok se ne provjeri na više scena.
+
+**NIJE dirano:** `rollout.py` i `interactive_demo.ipynb` (izgrađen na `rollout.py`-evom mehanizmu)
+i dalje koriste konstantne dim 2/3 — nisu ponovo validirani protiv ovog nalaza.
+
+**RAZRIJEŠENO (13.08 popodne, Dawidzardova sesija) — bio je ŠUM, ne signal.** Podatak koji je
+falio: ORIGINALNI demo run u 13:12 koristio je **iste konstantne dim 2/3 kao (A)**, samo drugi šum,
+i dao **5/12 = 42%** — identično kao (B). Dakle:
+
+```
+konstante, run 1 (13:12):  42%
+konstante, run 2 (A):      83%
+```
+
+Ista postavka, dva pokretanja, 41 procentni poen razlike. `generate_sequence.py` **nema fiksiran
+seed**, pa se (A) i (B) nisu razlikovali samo po dim 2/3 nego i po šumu — poređenje je bilo
+konfundirano od početka, a 12 binarnih mjerenja na jednoj sceni ionako ne može ništa razlučiti.
+Oprez u bilješci iznad bio je opravdan; odgovor je "šum".
+
+**NE treba prenositi `--real_dims23` na `rollout.py`/notebook** — nema dokaza da išta popravlja.
+Pouzdan broj ostaje iz `evaluate.py`: `dir_abs` 84-92% kroz 16 checkpointa (prosjek ~87.6%), a
+razlika prema `dir_rel`=100% nije bug nego razlika između APSOLUTNOG mjerenja (dominira dinamika
+scene) i UPARENOG relativnog poređenja.
+
+**Stari sljedeći korak (prevaziđen):** ponoviti ablaciju (A) vs (B) na više scena; ako se (B)-slabost potvrdi na više scena, prenijeti `--real_dims23` pristup i na
+`rollout.py`/notebook; tek onda commit-ovati `generate_sequence.py` izmjenu.
 ## FIDBEK DRUGOG MENTORA (Danilo, 13.08) — dvije prave rupe
 
 **1. "FID je vremenski slijep, dodajte FVD."** Tačno i posebno relevantno za nas: FID skuplja
@@ -1164,6 +1226,58 @@ očekuje 224×224, apsolutna vrijednost nije uporediva sa literaturom. Validno s
 `status_report_day3_final.md` (u repou i `/home/mls10/`). Format kao dan 2. Pokriva: Danilova dva
 poena sa mjerenjima, punu evaluaciju, VAE plafon, CFG negativan rezultat, i **otvoreno prijavljene
 naše metodološke greške** (preživljavačka pristrasnost, varljivost divergencije, neuspjela ablacija).
+## `rollout_metrics.py` — POKRENUT, REZULTATI (13.08, 13:13-13:43, Mihajlova sesija)
+
+Trajalo ~30 min (duže od procijenjenih 15 — hladan start modela pojeo dobar dio). Rezultati u
+`/home/mls10/logs/rollout_metrics.json`, sirov log `/home/mls10/logs/rollout_metrics_run.log`.
+
+```
+depth  frames    FVD*     FID     div  dir_rel  n_dir
+    1      17   106.4   99.57   48.19   0.969     32
+    2      33   157.6  137.90   52.84   0.531     32
+    3      49   169.8  154.63   55.68   0.710     31
+    4      65   176.1  167.56   58.54   0.714     28
+    5      81   176.7  179.60   61.01   0.792     24
+    6      97   183.5  183.83   63.22   0.846     26
+```
+
+**Glavni nalaz — potvrđuje Danilovu sumnju, uredan i jasan signal.** FVD*/FID oboje monotono
+rastu (pogoršavaju se) sa dubinom — FVD* 106→184, FID 100→184, skoro udvostručeno od dubine 1 do
+6. Ovo je čist dokaz exposure bias mehanizma opisanog gore (grešaka se gomila blok-po-blok kad
+model jede sopstveni izlaz umjesto pravog konteksta). Prijaviti oba mentora ovim brojevima —
+konačan, kvantitativan odgovor na Danilovo pitanje #2.
+
+**Neočekivano — `dir_rel` NIJE monotono opadanje.** Nagli pad na dubini 2 (96.9%→53.1%, blizu
+slučajnog pogađanja), pa POSTEPENI OPORAVAK do 84.6% na dubini 6. Suprotno prostoj "sve se
+pogoršava sa dubinom" priči. **Ne uzimati kao čist nalaz bez opreza** (isto pravilo kao gore, "NE
+zaključivati prerano" — ovo bi bio šesti-sedmi put): `n_dir` pada sa 32 na 26 sa dubinom (detektor
+ruke po crvenim pikselima ponekad ne uspije naći ruku u sve zamućenijim kasnijim frejmovima, pa
+manji i sve nasumičniji uzorak po dubini) — vjerovatno dobrim dijelom šum, ali vrijedi zabilježiti,
+ne ignorisati. **Ne koristiti ovaj broj kao dokaz da se kontrola "oporavlja" sa dubinom** dok se ne
+provjeri na većem uzorku ili drugačijim detektorom ruke.
+
+**ODGOVOR na gornju nedoumicu (Dawidzardova sesija, isti dan):** oprez je bio opravdan, i pitanje
+se može zatvoriti bez novog runa. `n_dir` ne pada slučajno — pada zato što skripta scene na kojima
+detektor NE nađe ruku **izbacuje iz računa umjesto da ih broji kao neuspjeh**. To je
+preživljavačka pristrasnost: najgori rollout-i ispadaju iz uzorka, pa prosjek preživjelih raste.
+
+Ako se nepraćeno broji kao neuspjeh (uvijek /32, što je i ispravno — slika je propala toliko da se
+ruka ne vidi, a to JESTE otkaz kontrole):
+
+```
+dubina 1: 31/32 = 96.9%      dubina 4: 20/32 = 62.5%
+dubina 2: 17/32 = 53.1%      dubina 5: 19/32 = 59.4%
+dubina 3: 22/32 = 68.8%      dubina 6: 22/32 = 68.8%
+```
+
+**Prividni oporavak nestaje.** Ostaje: oštar pad poslije prvog samostalnog bloka, pa ravno oko
+59-69% — iznad slučajnog (50%) ali daleko ispod početnih 97%. Intervali povjerenja su ±17% pri
+n=32, pa su dubine 2-6 međusobno nerazlučive; jedino je razlika dubina 1 naspram ostalih čvrsta.
+
+**Popravka u skripti je jedna linija** (brojati NaN kao neuspjeh umjesto `continue`) — nije još
+urađena, pa do tada tabelu prijavljivati ISPRAVLJENU, ne sirovu iz JSON-a.
+
+**Status:** commit-ovano (`8fb3083`).
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
