@@ -1307,8 +1307,8 @@ frontenda, i za prezentaciju je čak čitljiviji jer se vidi ŠTA se komanduje.
 ## STATUS 13.08 uveče
 
 - Videi za mentore spakovani i podijeljeni preko Google Drive-a (glavni rezultat / ograničenja / demo).
-- Mihajlo završio slobodne rollout-e; sledeće radi statistiku na više podataka.
-- **Večeras: DMD fine-tuning preko noći.** Komanda spremna (parametrizovan `--base_checkpoint`).
+- Mihajlo završio slobodne rollout-e i Monte Carlo statistiku (sekcija ispod).
+- **DMD fine-tuning POKRENUT 13.08 u 21:54 lokalno** (vidi sekciju "DMD TRENING" niže).
 - Sutra: testovi, debug, rezultati, prezentacija, dublje upoznavanje sa kodom.
 
 ## MONTE CARLO STATISTIKA SLOBODNOG ROLLOUT-a — 256 pokušaja, NASUMIČNE akcije (13.08, veče, Mihajlova sesija)
@@ -1372,6 +1372,57 @@ stabilnija. **Novi broj je vjerovatnije bliži istini, ne "poboljšanje modela".
 **PSNR/SSIM (17.26/0.7734) blizu, malo ispod `evaluate.py`-jevog broja (18.40/0.7794)** —
 očekivana varijacija (drugačiji nasumični uzorak/šum), dobra unakrsna potvrda da je ispravka
 sa pravom akcijom radila kako treba.
+
+## DMD TRENING — pokrenut 13.08 u 21:54 lokalno (drugi model, ODVOJEN od postojećeg)
+
+**Cilj:** ista LoRA + action encoder, ali preko **destilovanog (DMD) checkpointa** umjesto
+teacher-forcing checkpointa. Zanima nas brzina inference-a: DMD uzorkuje u **4 koraka**
+umjesto naša 24, što bi interaktivni demo dovelo ispod sekunde po pritisku.
+
+**Ispravka pojma koja se ponavljala u razgovoru:** DMD **NIJE manji model.** Ista
+arhitektura, isti 1.3B, checkpoint 5.55 GB, identičan `model_kwargs`, 885 tenzora sa istim
+prefiksima. Destilovano je **uzorkovanje**, ne model — obučen je da isti put od šuma do slike
+pređe u 4 velika skoka umjesto ~50 sitnih. Nije "preskakanje na završni korak", nego prečica
+kroz putanju.
+
+**Zašto je ishod neizvjestan (i zato vrijedan izvještavanja u bilo kom smjeru):** naš gubitak
+uči model da predviđa **pravi tok** — a to je tačno ono od čega ga je destilacija odučila. Ako
+uspije kontrola, moguće je da smo mu vratili pravi tok i time **pokvarili prečicu** zbog koje
+smo ga i uzeli. Zato se sutra testira **i sa 4 i sa 24 koraka** — ta razlika razdvaja "radi"
+od "poništili smo destilaciju".
+
+**Konfiguracija — namjerno IDENTIČNA velikom treningu osim baznog modela**, da bi razlika u
+rezultatu bila pripisiva isključivo destilaciji, a ne nekom drugom hiperparametru:
+
+```
+--base_checkpoint /tmp/local_ckpts_dmd/Wan21/Action2V/dmd/model.pt
+--checkpoint_dir  /home/mls10/checkpoints/bair_lora_dmd
+--wandb_run_name  dmd_rank16_bs32
+--rank 16 --batch_size 32 --max_steps 8000
+--lr_lora 2e-4 --lr_action 6e-4 --checkpoint_every 500 --val_every 500
+```
+
+**Izolacija od postojećeg modela (eksplicitan zahtjev — dva modela za poređenje):**
+
+| | postojeći | novi |
+|---|---|---|
+| checkpointi | `checkpoints/bair_lora_big/` (1.8 GB, do `step_8000.pt`) | `checkpoints/bair_lora_dmd/` |
+| bazni model | `local_ckpts/.../ar_diffusion_tf/model.pt` | `local_ckpts_dmd/.../dmd/model.pt` |
+| W&B run | stari | `dmd_rank16_bs32` |
+
+Postojeći direktorijum se ne otvara ni za čitanje; trening piše samo u `bair_lora_dmd`.
+Isti W&B projekat (`bair-action-lora`) namjerno — dva runa u istom grafiku.
+
+- **W&B:** https://wandb.ai/sm220315d-etf-/bair-action-lora/runs/2wl9mjgq
+- **Log:** `/home/mls10/logs/train_dmd_0813_1954.log`
+- **Trajanje:** ~7.7 h (8000 × ~3.45 s) → gotovo oko 05:45.
+- Nadzor postavljen na rane korake + svaki trag pada (traceback, CUDA/OOM, NaN, kill), da se
+  neuspjeh vidi odmah a ne ujutru.
+
+**Napomena za sutrašnju evaluaciju:** `evaluate.py` već ima `--base_checkpoint` i
+`--dmd_schedule`. `--dmd_schedule` reprodukuje iskrivljenu listu indeksa `[1000,750,500,250]`
+iz konfiguracije destilovanog modela — NE koristiti `set_timesteps(4)`, koji bi pogrešno dao
+`[1000,937,833,625]`.
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 

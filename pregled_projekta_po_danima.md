@@ -154,4 +154,44 @@ Ne stajemo jer smo ostali bez ideja, nego jer smo **izmjerili gdje su granice** 
 
 **Za upoznavanje sa kodom** (najkraći put, ~2 sata): `bair_dataset.py` (81 linija, nosi ključnu odluku o poravnanju akcija) → `git diff a31b657 -- Wan21/` (cijela naša izmjena repo koda, 15 linija) → `train_lora_action.py` (srce svega) → `CLAUDE.md` (za "zašto" umjesto "kako").
 
-**Trenutno stanje:** GPU slobodan, sve na `main`, `CLAUDE.md` ~1350 linija sa svakom odlukom i obrazloženjem.
+---
+
+## Kraj dana 3 — statistika i pokretanje DMD-a
+
+**Monte Carlo statistika (Mihajlo, 42 min, 256 pokušaja).** Naš raniji `rollout_metrics.py` je
+testirao **jednu fiksnu komandu** dijeljenu preko cijelog batch-a (npr. "svi idu desno"). Nova
+skripta `rollout_metrics_mc.py` daje **svakoj sceni sopstvenu nasumično izvučenu akciju po
+bloku**. To uklanja konfaund koji nas je već bockao: dva demo klipa dala su 50% (up-up-down-down)
+naspram 33% (right ×6), što je nagovještavalo da izbor komande utiče na rezultat.
+
+Nalaz potvrđuje ono što smo prijavili mentorima, ali sada na osam puta većem uzorku i sa
+intervalima povjerenja: FVD*/FID rastu monotono po dubini, kontrola pada nakon **prvog**
+samogenerisanog bloka pa se izravna. Bitno: intervali za dubinu 2 i 3 se **preklapaju
+preširoko** da bi se razlika smjela zvati razlikom — ono što je ranije bila ograda ("nerazlučivo
+pri n=32") sada je izmjerena tvrdnja.
+
+Smoke test mu je usput uhvatio pravi bug prije punog runa: ocjenjivanje nasumično-komandovane
+generacije protiv **prave** (drugačije komandovane) budućnosti davalo je besmislen PSNR (11.2).
+Riješeno drugim prolazom uslovljenim stvarnom snimljenom akcijom, koji se koristi **samo** za
+PSNR/SSIM; direction accuracy i FVD*/FID ostaju na nasumičnoj komandi, jer je to ono što mjere.
+
+**DMD fine-tuning pokrenut u 21:54**, traje do ~05:45. Drugi, potpuno odvojen model — postojeći
+se ne dira, cilj je da sutra imamo **dva** za poređenje.
+
+Jedna ispravka pojma koja se ponavljala: **DMD nije manji model.** Ista arhitektura, isti 1.3B,
+checkpoint 5.55 GB. Destilovano je **uzorkovanje** — obučen je da put od šuma do slike pređe u 4
+velika skoka umjesto ~50 sitnih. Prečica kroz putanju, ne manja mreža. Ono što dobijamo je
+brzina: 4 koraka umjesto naša 24, što bi interaktivni demo dovelo ispod sekunde po pritisku.
+
+Zašto je ishod neizvjestan, i zašto je zato zanimljiv: naš gubitak uči model da predviđa **pravi
+tok** — a to je tačno ono od čega ga je destilacija odučila. Ako kontrola proradi, moguće je da
+smo mu vratili pravi tok i time pokvarili prečicu zbog koje smo ga i uzeli. Zato se sutra testira
+**i sa 4 i sa 24 koraka**: ta razlika razdvaja "radi" od "poništili smo destilaciju". Sva tri
+ishoda su izvještajna.
+
+Konfiguracija je namjerno **identična** velikom treningu osim baznog modela, da bi razlika u
+rezultatu bila pripisiva isključivo destilaciji. Isti W&B projekat, pa oba runa stoje u istom
+grafiku.
+
+**Trenutno stanje:** DMD trening radi, sve ostalo na `main`, `CLAUDE.md` preko 1500 linija sa
+svakom odlukom i obrazloženjem.
