@@ -1086,6 +1086,38 @@ dvije identifikovane popravke — što je jače nego da ga nismo primijetili.
 
 Izvještaj za oba mentora: `status_report_day3.md` (u repou i u `/home/mls10/`).
 
+## INTERAKTIVNI DEMO — RADI (13.08, 15:01)
+
+`lora_action/interactive_demo.ipynb` uspješno pokrenut. Model se drži u Jupyter kernelu, pa se
+5-6 min učitavanje plaća JEDNOM; svaki klik na dugme košta samo sampling (~4.5 s po bloku od 16
+frejmova). Izlaz: `/home/mls10/logs/interactive_left_down_still.mp4` — 61 frejm (13 konteksta +
+3 bloka × 16), niz `lijevo → dolje → miruj`.
+
+**Gotcha za sledeći put:** tokom učitavanja modela Jupyter pokazuje `[*]` i djeluje ZAMRZNUTO 5-6
+minuta. Nije zamrznuto — provjera je `ps` (kernel troši ~270% CPU, RAM raste do ~34 GB) i
+`nvidia-smi` (GPU ostaje na ~400 MB dok se čita sa diska, tek onda skoči na ~15 GB). Ne gasiti.
+
+## `rollout_metrics.py` — NAPISAN, ČEKA POKRETANJE (predaja Mihajlu)
+
+Odgovara na **oba Danilova pitanja jednim eksperimentom**: FVD (koji vidi vrijeme) mjeren kao
+funkcija DUBINE SLOBODNOG ROLLOUT-a (gdje model jede sopstveni izlaz).
+
+**Dizajn poređenja — bitno:** prave BAIR epizode imaju samo 30 frejmova, pa iza dubine 1 NEMA
+uparenog ground truth-a i PSNR/SSIM su nedefinisani. Umjesto toga, na svakoj dubini uzima se
+**posljednjih 16 dekodiranih frejmova** (najsvježije generisani blok) i poredi sa nasumičnim
+16-frejmnim prozorima iz pravih held-out klipova. Pitanje je na svakoj dubini isto: *"da li
+najsvježiji izlaz i dalje izgleda stvarno?"*
+
+**FVD implementacija i njena ograda:** kanonski FVD koristi određeni Kinetics I3D checkpoint koji
+nije instalabilan ovdje (`common_metrics_on_video_quality` nema u indeksu). Koristimo torchvision
+**S3D** (takođe Kinetics-400, arhitektonski nasljednik I3D-a), 1024-dim odlike, Fréchet distanca
+preko njih. **Označavati kao `FVD*`, NE kao FVD** — nije uporedivo sa objavljenim brojevima:
+(1) drugi backbone, (2) 256 epizoda umjesto hiljada, (3) naši frejmovi su 64×64 a mreža očekuje
+224×224, pa I3D/S3D uglavnom gleda artefakte uvećavanja. **Validno samo kao RELATIVNA mjera između
+naših dubina.** Ista ograda već važi za naš FID.
+
+Pokretanje: `python rollout_metrics.py --max_depth 6 --n_scenes 32` (~15 min).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
