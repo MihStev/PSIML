@@ -70,6 +70,8 @@ def parse_args():
                     help="held-out split -- never trained on, so val loss is the honest signal")
     p.add_argument("--val_every", type=int, default=250)
     p.add_argument("--val_batches", type=int, default=8)
+    p.add_argument("--base_checkpoint", default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt",
+                    help="which pretrained checkpoint to adapt; point at the DMD (distilled)\n                          model to run the mentor's open question")
     return p.parse_args()
 
 
@@ -115,7 +117,8 @@ def main():
     model = CameraCausalDiffusion(config, device=device)
 
     print("=== Loading teacher-forcing checkpoint ===", flush=True)
-    ckpt_path = "/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt"
+    ckpt_path = args.base_checkpoint
+    print(f"    base: {ckpt_path}", flush=True)
     state_dict = torch.load(ckpt_path, map_location="cpu")
     gen_sd = state_dict.get("generator_ema", state_dict.get("generator"))
     try:
