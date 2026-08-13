@@ -912,6 +912,86 @@ PSNR 17.41 | SSIM 0.7272 | divergencija 43.84 (kontekst **0.00**) | smjer 8/8 re
 2. **DMD LoRA** na 64×64 — Nedkovo otvoreno pitanje; nestabilnost je VALIDAN nalaz.
 3. **Prezentacija.** Rezolucija ide u "future work" (vidi sekciju o datasetima).
 
+## PUNA EVALUACIJA — 16 checkpointa × 64 neviđene scene (13.08, 12:32) — KLJUČNI NALAZ
+
+`evaluate.py`, test split (nikad treniran), 24 koraka uzorkovanja, isti šum po varijanti.
+Rezultati sirovo u `lora_action/eval_results_step8000_run.json`.
+
+```
+ korak   PSNR    SSIM    FID    div    ctx   smj_rel  smj_aps
+   500  14.40  0.6324   43.1  39.73   0.00    98.2%    85.1%
+  1000  16.04  0.6873   34.4  44.03   0.00   100.0%    88.3%
+  1500  16.19  0.6981   31.4  45.53   0.00   100.0%    86.7%
+  2000  15.78  0.6865   32.7  44.56   0.00   100.0%    86.7%
+  2500  16.77  0.7178   30.6  44.09   0.00   100.0%    84.4%
+  3000  16.67  0.7180   30.9  44.62   0.00   100.0%    89.8%
+  3500  17.02  0.7307   29.3  44.61   0.00   100.0%    89.1%
+  4000  17.39  0.7480   29.4  43.66   0.00   100.0%    89.1%
+  4500  17.65  0.7553   28.2  46.50   0.00   100.0%    86.7%
+  5000  17.47  0.7483   28.5  46.99   0.00   100.0%    88.3%
+  5500  17.92  0.7621   27.9  45.36   0.00   100.0%    87.5%
+  6000  18.01  0.7673   27.8  44.61   0.00   100.0%    90.6%
+  6500  17.91  0.7640   28.2  44.43   0.00   100.0%    92.2%
+  7000  17.83  0.7607   28.9  43.56   0.00   100.0%    88.3%
+  7500  17.53  0.7530   27.9  43.48   0.00   100.0%    89.1%
+  8000  18.40  0.7794   27.2  43.78   0.00    98.4%    86.7%
+```
+
+### NALAZ: kontrola i vjernost su DVIJE RAZLIČITE VREMENSKE SKALE
+
+- **Kontrola se zasiti rano i stane.** `dir_rel` = **100% od koraka 1000 kroz cijeli trening**;
+  divergencija oscilira 43-47 bez trenda. Preostalih 7000 koraka NIJE donijelo ništa kontroli.
+- **Vjernost raste do samog kraja.** Najbolji checkpoint po sva tri metrike je **posljednji (8000)**:
+  PSNR 18.40, SSIM 0.7794, FID 27.2. Nema platoa.
+- Ovo se ne bi vidjelo ni iz val loss-a ni iz bilo koje pojedinačne metrike.
+
+**Prag kontrole u UZORCIMA, ne koracima:** korak 1000 × batch 32 = **~32,000 uzoraka** (0.74 epohe).
+"2500 iteracija" (Nedkova procjena) nije prenosiva jedinica bez batch size-a — pri batch 8 to je
+20k uzoraka, pri batch 32 je 80k. Naš prvi trening (2500 × 8 = 20k) stao je PRIJE ovog praga, što
+vjerovatno objašnjava zašto je djelovao slabije.
+
+**`div_ctx = 0.00` na SVIH 16 checkpointa** — kontekstni frejmovi bit-identični između varijanti,
+dakle mjerenje divergencije je čisto od početka do kraja, nije artefakt.
+
+**Za deploy/demoe koristiti `step_8000.pt`** — najbolja vjernost, kontrola ionako zasićena.
+
+## VAE PLAFON — izmjeren, kontekstualizuje sve PSNR brojeve
+
+Dekodiranje PRAVOG latenta naspram sirovih piksela, 32 test scene: **PSNR = 22.74 dB**
+(min 21.56, max 24.69). To je **tvrd plafon** — nijedna generacija ne može biti oštrija, jer VAE
+stiska 12,288 vrijednosti u 1,024 po frejmu i taj gubitak je nepovratan.
+
+- Naš najbolji (8000): 18.40 dB = **81% plafona**.
+- Za poređenje, dobar VAE na nativnoj rezoluciji daje 30+ dB; naših 22.74 pokazuje da ga koristimo
+  daleko izvan projektovanog režima (8×8 latent umjesto 60×104).
+- **Posljedica:** zamućenost izlaza je DOBRIM DIJELOM VAE, ne model. I ovo je prvi KVANTITATIVAN
+  argument za veću rezoluciju — ona podiže PLAFON, nije estetika.
+- Preostalih 4.3 dB je model, ali dio toga je nepovratan: model predviđa BUDUĆNOST, koja je stvarno
+  neizvjesna, a x0-predikcija usrednjava moguće ishode → zamućenje svojstveno zadatku.
+
+## DRUGA KAMERA (`image_aux1`) — provjerena, opravdano odbačena
+
+BAIR ima drugi ugao koji smo odbacili pri ekstrakciji. Sad izmjereno (6 test scena):
+
+| | `image_main` | `image_aux1` |
+|---|---|---|
+| udio piksela ruke | **7.50%** | **3.37%** (manje od pola) |
+| ugao | bliži, ruka dominira | širi, ruka pri ivici |
+| ekspozicija | uredna | jak prebačaj (spržena bijela zona) |
+
+Slika: `/home/mls10/logs/main_vs_aux1.png`. Odluka je bila ispravna, iako donesena bez provjere.
+Ostaje kao opcija za 2x podataka, ALI traži oznaku ugla u kondicioniranju — geometrija kamere je
+druga, pa je i mapiranje akcija→pomjeraj drugo; bez oznake bi model učio dva suprotstavljena
+mapiranja i kontrola bi OSLABILA.
+
+## NAUČENO O SOPSTVENOM RASUĐIVANJU (za buduće sesije)
+
+Tokom ovog projekta sam **PET puta** prerano proglasio plato/konvergenciju — na val loss-u (koraci
+2500, 3500, 6000) i na eval krivoj (1500, 6000). Svaki put me demantovala sledeća tačka.
+**Pravilo: ne zaključivati trend iz manje od ~4 tačke, i gledati prozore, ne pojedinačne tačke.**
+Sve odluke o prekidu treninga koje sam htio donijeti bile bi štetne — final checkpoint (8000) je
+ispao najbolji po vjernosti.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
