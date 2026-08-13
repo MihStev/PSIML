@@ -1080,9 +1080,73 @@ ignorisati dok se ne provjeri na više scena.
 **NIJE dirano:** `rollout.py` i `interactive_demo.ipynb` (izgrađen na `rollout.py`-evom mehanizmu)
 i dalje koriste konstantne dim 2/3 — nisu ponovo validirani protiv ovog nalaza.
 
-**Sljedeći korak:** ponoviti ablaciju (A) vs (B) na više scena (ne samo idx=3) da se odvoji signal
-od šuma; ako se (B)-slabost potvrdi na više scena, prenijeti `--real_dims23` pristup i na
+**RAZRIJEŠENO (13.08 popodne, Dawidzardova sesija) — bio je ŠUM, ne signal.** Podatak koji je
+falio: ORIGINALNI demo run u 13:12 koristio je **iste konstantne dim 2/3 kao (A)**, samo drugi šum,
+i dao **5/12 = 42%** — identično kao (B). Dakle:
+
+```
+konstante, run 1 (13:12):  42%
+konstante, run 2 (A):      83%
+```
+
+Ista postavka, dva pokretanja, 41 procentni poen razlike. `generate_sequence.py` **nema fiksiran
+seed**, pa se (A) i (B) nisu razlikovali samo po dim 2/3 nego i po šumu — poređenje je bilo
+konfundirano od početka, a 12 binarnih mjerenja na jednoj sceni ionako ne može ništa razlučiti.
+Oprez u bilješci iznad bio je opravdan; odgovor je "šum".
+
+**NE treba prenositi `--real_dims23` na `rollout.py`/notebook** — nema dokaza da išta popravlja.
+Pouzdan broj ostaje iz `evaluate.py`: `dir_abs` 84-92% kroz 16 checkpointa (prosjek ~87.6%), a
+razlika prema `dir_rel`=100% nije bug nego razlika između APSOLUTNOG mjerenja (dominira dinamika
+scene) i UPARENOG relativnog poređenja.
+
+**Stari sljedeći korak (prevaziđen):** ponoviti ablaciju (A) vs (B) na više scena; ako se (B)-slabost potvrdi na više scena, prenijeti `--real_dims23` pristup i na
 `rollout.py`/notebook; tek onda commit-ovati `generate_sequence.py` izmjenu.
+## FIDBEK DRUGOG MENTORA (Danilo, 13.08) — dvije prave rupe
+
+**1. "FID je vremenski slijep, dodajte FVD."** Tačno i posebno relevantno za nas: FID skuplja
+per-frame Inception odlike, pa video sa realističnim pojedinačnim frejmovima ali fizički pogrešnim
+kretanjem prolazi dobro. Naša cijela tvrdnja je o KRETANJU, dakle FID mjeri baš ono što ne testiramo.
+- Nije u `torchmetrics` → traži I3D (Kinetics) backbone zasebno. Planirano za dan 4.
+- Ograde koje treba SAMI navesti: FVD normalno traži stotine-hiljade videa (mi imamo 256), a
+  standardne implementacije skaliraju na 224×224 dok su naši frejmovi 64×64 → I3D bi uglavnom
+  gledao artefakte uvećavanja. Prijaviti kao RELATIVNU mjeru između naših checkpointa.
+
+**2. "Je li sve generisanje do sad teacher-forced? Imate li slobodne rollout-e?"**
+**Najoštrije zapažanje dana. Odgovor: DA, svi prijavljeni brojevi su teacher-forced.**
+- U svim mjerenjima kontekst su PRAVI frejmovi 0-3, generišu se 4-7 u jednom bloku, `clean_x` je
+  pravi latent. To važi za cijelu tabelu evaluacije, CFG sweep i rezultate po akcijama.
+- **Slobodni rollout POSTOJI ali samo kvalitativno** — `rollout.py` (danas): kontekst bloka N je
+  GENERISANI izlaz bloka N-1. Dva runa: `up up down down` (4 bloka), `right ×6` (6 blokova).
+
+**Šta rollout pokazuje (nepovoljno):**
+- Magnitude latenta ostaju u ispravnom opsegu (±3.2 vs pravi ±3-4) kroz 4 bloka — nema numeričke
+  eksplozije.
+- ALI kvalitet slike progresivno propada; na 6 blokova izlaz je nekoherentan.
+- Tačnost komandovanog smjera po bloku je otprilike slučajna (2/6 na `right ×6`), naspram
+  ~87% aps. / 100% rel. u teacher-forced režimu.
+
+**Mehanizam (exposure bias):** model je viđao samo ČIST, pravi kontekst. U rollout-u jede sopstveni
+izlaz — uslovni prosjek, blago zamućen i van distribucije — koji se tretira kao ground truth. Greška
+se MNOŽI, ne sabira. Zamućenje hrani samo sebe: zamućen kontekst = dvosmislenija scena = model
+usrednjava preko više budućnosti = još zamućenije. Zato minWM ima Stage 2/3 POSLIJE Stage 1, i zato
+je Nedko rekao "sigurniji, ali neće moći dug rollout".
+
+**Dvije konkretne popravke, nijedna uzeta:**
+- `noise_augmentation_max_timestep` POSTOJI u repou i kod nas je **0**. Kad je > 0, na čist kontekst
+  se tokom treninga dodaje šum → model nauči da toleriše nesavršen kontekst. Jedna linija konfiga,
+  ali 7.6h ponovnog treninga.
+- Stage 2 self-forcing — prava popravka, cijela dodatna faza treninga.
+
+**OTVORENA RUPA:** nismo pustili metrike NAD slobodnim rollout-ima. Kriva degradacije (metrike vs
+dužina rollout-a) je očigledno sledeće mjerenje i jeftino je — kod postoji.
+
+**ODLUKA (dan 3):** prihvatamo ograničenje i prijavljujemo ga. Razlozi: (1) posljedica je namjernog
+izbora Stage 1 koji je mentor preporučio kao sigurniji, (2) naš isporučivi rezultat je KRATAK rollout
+sa kontrolom, i to radi, (3) 7.6h treninga za neizvjesno poboljšanje sporedne osobine, dva dana prije
+roka, nije dobra razmjena. Ide u prezentaciju kao izmjereno ograničenje sa objašnjenim mehanizmom i
+dvije identifikovane popravke — što je jače nego da ga nismo primijetili.
+
+Izvještaj za oba mentora: `status_report_day3.md` (u repou i u `/home/mls10/`).
 
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
