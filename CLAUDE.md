@@ -1118,6 +1118,53 @@ naših dubina.** Ista ograda već važi za naš FID.
 
 Pokretanje: `python rollout_metrics.py --max_depth 6 --n_scenes 32` (~15 min).
 
+## KRIVA DEGRADACIJE SLOBODNOG ROLLOUT-a — IZMJERENA (13.08, `rollout_metrics.py`)
+
+32 held-out scene, dubine 1-6, FVD* (S3D) + FID + divergencija + smjer. Sirovi izlaz u
+`/home/mls10/logs/rollout_metrics.json`.
+
+```
+dubina  frejm    FVD*     FID   divergencija   smjer(ispravljen)
+     1     17   106.4    99.6         48.19          96.9%
+     2     33   157.6   137.9         52.84          53.1%
+     3     49   169.8   154.6         55.68          68.8%
+     4     65   176.1   167.6         58.54          62.5%
+     5     81   176.7   179.6         61.01          59.4%
+     6     97   183.5   183.8         63.22          68.8%
+```
+
+- **Dubina 1 (96.9%) nezavisno reprodukuje teacher-forced rezultat (100% na 64 scene)** — dvije
+  metodologije se slažu, dakle nije artefakt nove skripte.
+- **Kontrola se ruši poslije TAČNO JEDNOG samostalno generisanog bloka:** 96.9% → 53.1% (slučajno).
+  Dubine 3-6 su 59-69%, međusobno statistički nerazlučive (±17% pri n=32).
+- **FVD\* je osjetljiviji RANO** (+48% na skoku 1→2, FID +38%) i **zasićuje se oko dubine 4-5**
+  (176→177→184), dok FID nastavlja da raste (168→180→184). Vremenska nekoherentnost se pojavi prije
+  nego što pojedinačni frejmovi propadnu — tačno Danilov argument, i empirijski potvrđen.
+
+### DVIJE METODOLOŠKE POUKE (obje vrijedne prijave)
+
+**1. Preživljavačka pristrasnost u NAŠOJ metrici — nađena i ispravljena.** Detektor ruke (po boji)
+ne uspije na jako degradiranim rollout-ima, a skripta je te scene IZBACIVALA umjesto da ih broji kao
+neuspjeh. `n` je padao 32→24 na dubini 5. Sirovi brojevi bi čitali 71/71/79/85% na dubinama 3-6 —
+prividan OPORAVAK koji ne postoji. Ispravno: nepraćeno = neuspjeh, uvijek /32. **Popravka u skripti
+je jedna linija; do tada tabelu prijavljivati ispravljenu.**
+
+**2. Divergencija SAMA je varljiva.** Kroz dubinu divergencija RASTE (48→63) dok tačnost smjera PADA
+(97%→~60%). Dva rollout-a se sve više razlikuju, ali ne kontrolisano — oba nezavisno lutaju.
+Divergencija mjeri "različito", smjer mjeri "različito NA TAČAN NAČIN". Da smo pratili samo
+divergenciju, zaključili bismo da kontrola JAČA s dubinom — suprotno od istine.
+
+**FVD implementacija:** torchvision `s3d` (Kinetics-400), 1024-dim odlike, Fréchet distanca.
+Označavati kao **FVD\***, NE FVD — kanonski koristi određeni I3D checkpoint koji nije instalabilan
+(`common_metrics_on_video_quality` nema u indeksu). Uz 256 klipova na 64×64 hranjenih mreži koja
+očekuje 224×224, apsolutna vrijednost nije uporediva sa literaturom. Validno samo RELATIVNO.
+
+## IZVJEŠTAJ ZA MENTORE — dan 3
+
+`status_report_day3_final.md` (u repou i `/home/mls10/`). Format kao dan 2. Pokriva: Danilova dva
+poena sa mjerenjima, punu evaluaciju, VAE plafon, CFG negativan rezultat, i **otvoreno prijavljene
+naše metodološke greške** (preživljavačka pristrasnost, varljivost divergencije, neuspjela ablacija).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
