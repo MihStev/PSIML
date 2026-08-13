@@ -1311,6 +1311,68 @@ frontenda, i za prezentaciju je čak čitljiviji jer se vidi ŠTA se komanduje.
 - **Večeras: DMD fine-tuning preko noći.** Komanda spremna (parametrizovan `--base_checkpoint`).
 - Sutra: testovi, debug, rezultati, prezentacija, dublje upoznavanje sa kodom.
 
+## MONTE CARLO STATISTIKA SLOBODNOG ROLLOUT-a — 256 pokušaja, NASUMIČNE akcije (13.08, veče, Mihajlova sesija)
+
+Nova skripta, `lora_action/rollout_metrics_mc.py`, nadograđuje `rollout_metrics.py`: umjesto
+JEDNE komande dijeljene preko cijelog batch-a (npr. "svi idu desno"), **svaka scena dobija
+SVOJU nezavisno izvučenu nasumičnu akciju po bloku** (up/down/left/right, i.i.d., dubina 1-3).
+Motivacija: dva ranija ad-hoc demo klipa (up-up-down-down 50% vs right×6 33%) su nagovijestila
+da bi tip komande mogao da utiče na rezultat — ovo to testira sistematski, na 256 nezavisnih
+pokušaja umjesto jedne scene.
+
+**Bag uhvaćen smoke testom prije punog run-a (vrijedi zapamtiti):** prva verzija je računala
+PSNR/SSIM tako što je generisan blok (pod NASUMIČNOM komandom) poređen sa PRAVIM budućim
+frejmovima (koji su nastali pod STVARNOM akcijom te epizode) — jabuke i kruške, dalo je
+PSNR=11.23 (mnogo niže od očekivanog ~18). **Ispravka:** na dubini 1 se sada radi DODATAN,
+odvojen generacioni prolaz pod PRAVOM, snimljenom akcijom scene (ista `_align_to_latent_frames`
+konvencija kao `bair_dataset.py`) — SAMO za PSNR/SSIM poređenje; tačnost pravca i FVD*/FID i
+dalje koriste nasumičnu komandu (to im i jeste posao). Poslije ispravke: PSNR=17.45 na smoke
+testu (n=8) — u očekivanom opsegu.
+
+**Rezultati** (256 pokušaja, dubine 1-3, `/home/mls10/logs/rollout_metrics_mc.json`, ukupno
+trajanje 2533s = 42 min):
+
+```
+dubina    n    FVD*    FID   tačnost_pravca      95% CI       PSNR    SSIM
+     1  256    76.2   35.35        78.9%    [73.5%,83.5%]    17.26   0.7734
+     2  256    89.5   54.31        71.9%    [66.1%,77.0%]      n/a     n/a
+     3  256    98.2   69.56        74.2%    [68.5%,79.2%]      n/a     n/a
+```
+
+PSNR/SSIM SAMO na dubini 1 — BAIR epizode (30 sirovih frejmova) nemaju sačuvan ground truth
+iza jednog generisanog bloka, matematički nedefinisano dalje.
+
+**VAŽNO — `dir_acc` ovdje NIJE isti tip statistike kao stari `dir_rel`.** Stari `dir_rel`
+(prošla sekcija, 96.9% na dubini 1) je UPARENO/relativno poređenje (ista scena/šum, "da li
+desno-verzija ide više desno nego lijevo-verzija") — lakše po definiciji. Novi `dir_acc` je
+APSOLUTNO, po pokušaju ("da li se ruka pomjerila u TAČNO komandovanom smjeru") — isti tip
+mjere kao `dir_abs` iz `evaluate.py` (istorijski 84-92%). **79% na dubini 1 se lijepo uklapa u
+`dir_abs`, NIJE pad u odnosu na stari 97% `dir_rel` — različite mjere, ne uporediva direktno.**
+
+**Zašto je FVD*/FID SADA NIŽI (bolji) nego u prošlom 32-scenskom run-u na istoj dubini 1**
+(76.2 vs 106.4; 35.35 vs 99.57) — očekivano i objašnjivo, ne artefakt: Fréchet distanca se
+računa iz kovarijansne matrice u 2048-dim (FID) / 1024-dim (FVD*) prostoru. Sa 512 frejmova
+(32 scene) ranije, procjena kovarijanse u toliko dimenzija je bila statistički loša (poznat
+problem FID-a uopšte, otud preporuka za hiljade uzoraka u literaturi) — stari broj je
+vjerovatno bio VJEŠTAČKI NADUVAN. Sa 4096 frejmova (256 scena) sada, procjena je mnogo
+stabilnija. **Novi broj je vjerovatnije bliži istini, ne "poboljšanje modela".**
+
+**Tumačenje krive (dubina 1→2→3):**
+- Pravi, verovatno stvaran pad: dubina 1→2 (78.9%→71.9%, CI-jevi se jedva dodiruju).
+- Dubina 2 naspram 3 (71.9% vs 74.2%): CI-jevi se ŠIROKO preklapaju (68.5-77.0) — **statistički
+  nerazlučivo, NE tumačiti kao "oporavak"** (ista disciplina kao "NAUČENO O SOPSTVENOM
+  RASUĐIVANJU" gore — ovo bi bio još jedan put da se prerano pročita trend iz šuma).
+- **Ovo POTVRĐUJE prethodni nalaz** (32-scenski run, "oštar pad poslije TAČNO JEDNOG
+  samostalnog bloka, pa ravno") na mnogo čvršćem statističkom temelju — mehanistički ima
+  smisla: prvi samo-generisani blok je najveći šok distribucije, dalji blokovi grade na već
+  blago oštećenom kontekstu pa dodatna šteta po bloku opada.
+- FVD*/FID nastavljaju glatko da rastu 2→3 (89.5→98.2, 54.31→69.56) DOK je tačnost pravca
+  ravna — treća nezavisna potvrda "dvije različite vremenske skale" nalaza.
+
+**PSNR/SSIM (17.26/0.7734) blizu, malo ispod `evaluate.py`-jevog broja (18.40/0.7794)** —
+očekivana varijacija (drugačiji nasumični uzorak/šum), dobra unakrsna potvrda da je ispravka
+sa pravom akcijom radila kako treba.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

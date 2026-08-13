@@ -55,17 +55,59 @@ depth  frames    FVD*     FID     div   direction
 
 ## Currently Running
 
-- Nothing. GPU is free pending your input below.
+- Nothing. Option A (below) ran tonight; GPU is free pending your input on B/C.
+
+## Option A — Done: 256-Trial Monte Carlo, Randomized Per-Block Actions
+
+Ran the statistics option below the same night. Instead of one shared command per batch
+(e.g. "everyone goes right"), every one of 256 held-out scenes now draws its OWN random
+action per block (up/down/left/right, i.i.d.), depths 1–3. Motivated by two earlier ad-hoc
+clips (up-up-down-down: 50% landed; right×6: 33% landed) hinting the specific command might
+matter — this tests that properly instead of anecdotally.
+
+```
+depth    n    FVD*    FID   direction (abs.)      95% CI       PSNR    SSIM
+    1  256    76.2   35.35        78.9%      [73.5%,83.5%]    17.26   0.7734
+    2  256    89.5   54.31        71.9%      [66.1%,77.0%]      n/a     n/a
+    3  256    98.2   69.56        74.2%      [68.5%,79.2%]      n/a     n/a
+```
+
+PSNR/SSIM only at depth 1 — undefined beyond it, no stored ground truth (BAIR episodes are
+30 raw frames).
+
+**A real bug the smoke test caught first:** the first version scored the generated block
+(under a random command) against the real future (which followed the scene's actual,
+different action) — apples to oranges, gave PSNR 11.2. Fixed by running a second, separate
+generation at depth 1 under the scene's *true recorded* action, used only for PSNR/SSIM.
+After the fix: 17.26 / 0.773, in line with the 64-scene evaluation (18.40 / 0.779).
+
+**Note this `direction accuracy` is not the same statistic as the `direction` column in the
+depth table above** — that one was a paired/relative comparison (easier); this one is
+absolute, per-trial (harder, matches `dir_abs` in the full evaluation, historically 84–92%).
+79% at depth 1 is consistent with that, not a regression from the 97% figure above.
+
+**Why FVD*/FID are lower here than in the 32-scene run at the same depth** (76.2 vs 106.4;
+35.35 vs 99.57): Fréchet distance needs its covariance estimated in a 2048-d (FID) / 1024-d
+(FVD*) feature space. 512 frames (32 scenes) under-samples that badly, a known FID failure
+mode; 4096 frames (256 scenes) is far better conditioned. The earlier number was likely
+inflated by sample size, not a different result.
+
+**Reading the curve:** the 1→2 drop looks real (CIs barely touch); 2 vs 3 (71.9% vs 74.2%)
+overlap widely and are not distinguishable — we are treating this as noise, not recovery.
+This confirms, on much firmer footing, the earlier finding: control takes its hit after
+exactly one self-generated block, then holds flat while FVD*/FID keep climbing (89.5→98.2,
+54.31→69.56) — the same "two different timescales" result, independently replicated.
+
+Script: `lora_action/rollout_metrics_mc.py`. Raw output: `/home/mls10/logs/rollout_metrics_mc.json`.
 
 ## Where We Would Value Your Opinion
 
-Before committing the remaining time we would rather hear you than decide alone. Three options are prepared and could start tonight.
+A is done (above). B and C are still open.
 
-- **A. More statistics on what we have.** Our per-scene results come from a single seed at n=32, with intervals wide enough that several reported differences are not individually resolvable. Multiple seeds and error bars would let us say which effects are real. Strengthens existing claims rather than adding new ones.
 - **B. LoRA on the distilled (DMD) checkpoint.** Your secondary question, still open. One correction: the memory premise does not hold — model/dmd.py holds three transformer copies, so true DMD training costs ~3× more, and plain LoRA on the DMD checkpoint costs the same as what we run now. The real benefit is inference speed (4 denoising steps vs our 24), which is what would make the interactive demo genuinely real-time. Its risk is also its interest: the model was distilled to skip steps and our loss teaches it to predict the true flow again, partially undoing that. All three outcomes are reportable.
 - **C. Stop experimenting and consolidate.** The result is already complete: action conditioning verified on held-out data in both axes, full metric sweep, VAE ceiling, measured degradation curve.
 
-Our inclination is A then B, but we would rather follow your judgement. The presentation still has to be built, so whatever runs has to leave room for it.
+Our inclination now is B if there's time, otherwise C, but we would rather follow your judgement. The presentation still has to be built, so whatever runs has to leave room for it.
 
 ## Not Doing
 
