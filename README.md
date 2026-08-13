@@ -1,265 +1,185 @@
-# 🌍 minWM: Full-Stack Open-Source Video World Model Framework
+# Action-Conditioned Video World Model on BAIR
 
->  ***A full-stack framework and tutorial for newcomers, rather than a specific model.***
+Teaching a pretrained video diffusion model to obey a **robot action**: given a few
+frames of a scene and a commanded gripper displacement, predict the future frames —
+and have the arm actually move the way it was told.
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2605.30263"><img src="https://img.shields.io/badge/Technical_Report-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="Technical Report"></a>
-  <a href="https://huggingface.co/MIN-Lab/minWM"><img src="https://img.shields.io/badge/Hugging_Face-Models-FFD21E?logo=huggingface&logoColor=black" alt="Hugging Face"></a>
-  <a href="assets/wechat.jpg"><img src="https://img.shields.io/badge/WeChat-Group-07C160?logo=wechat&logoColor=white" alt="WeChat"></a>
-</p>
+Built on [minWM](https://github.com/shengshu-ai/minWM) (Wan2.1-T2V-1.3B backbone).
+The upstream project conditions on **camera pose**; conditioning on **robot action**
+is the gap this work fills. The upstream README is preserved as
+[`README_upstream_minWM.md`](README_upstream_minWM.md).
 
-**minWM** is our contribution to the world-model community: a **full-stack open-source framework** that walks you end-to-end through turning a bidirectional T2V foundation model into an action-conditioned video world model — with example data, runnable scripts, **Claude skills** capturing our hands-on experience, and **onboarding knowledge** for newcomers. We hope more researchers and developers join us in growing the community together.
+PSIML project, 5 days. Everything below was measured on a **held-out test split the
+model never trained on**.
 
-## 🎬 Demo
+---
 
-https://github.com/user-attachments/assets/99c25915-7fe7-4a20-a2c4-9d291502fccf
+## Result
 
-## 🔥 News
+Same scene, same random noise, only the commanded action changed:
 
-- **2026-05-29** 🚀 We release the [technical report](https://arxiv.org/pdf/2605.30263).
-- **2026-05-17** 🚀 We release **minWM** — the first full-stack open-source world model framework.
+| | dx (px) | dy (px) | commanded | |
+|---|---|---|---|---|
+| `right` | **+7.27** | +2.74 | dx > 0 | ✅ |
+| `left` | **−7.19** | +5.02 | dx < 0 | ✅ |
+| `up` | +9.72 | **−6.76** | dy < 0 | ✅ |
+| `down` | −1.54 | **+3.07** | dy > 0 | ✅ |
 
+Gripper displacement measured in pixels on a 64×64 frame. The horizontal axis is
+near-symmetric: a **14.5 px separation** between opposite commands, ~23% of the frame
+width, from changing one number.
 
-## 📋 Table of Contents
+**Metrics on 64 held-out scenes, best checkpoint:**
 
-- [🎬 Demo](#-demo)
-- [🔥 News](#-news)
-- [✨ Why minWM?](#-why-minwm)
-  - [1. Full-Stack Framework](#1-full-stack-framework)
-  - [2. Multi-Backbone Support](#2-multi-backbone-support)
-  - [3. Multi-Condition Injection](#3-multi-condition-injection)
-  - [4. Claude Skills — Modify the Framework with an LLM Assistant](#4-claude-skills--modify-the-framework-with-an-llm-assistant)
-  - [5. Onboarding Knowledge — for Newcomers to World Models](#5-onboarding-knowledge--for-newcomers-to-world-models)
-- [🛠️ Installation](#️-installation)
-- [🧱 Model Checkpoints](#-model-checkpoints)
-- [🚀 Quick Start](#-quick-start)
-- [⚙️ Data & Training & Reproduction](#️-data--training--reproduction)
-- [📚 Citation](#-citation)
-- [Contact](#contact)
-- [🙏 Acknowledgements](#-acknowledgements)
+| metric | value | note |
+|---|---|---|
+| direction accuracy (relative) | **100%** | does `right` end up right of `left`? |
+| direction accuracy (absolute) | ~87% | did each command move its own way? |
+| action-swap divergence | 43.8 | mean L1 between opposite-action futures (0–255 scale) |
+| — same, on context frames | **0.00** | built-in control: context must be identical |
+| PSNR / SSIM / FID | 18.40 / 0.779 / 27.2 | read against the VAE ceiling below |
 
-## ✨ Why minWM?
+---
 
-### 1. Full-Stack Framework
+## Two findings worth carrying elsewhere
 
-The complete **data → training → inference** pipeline is open-sourced; every stage exposes input/output checkpoints so you can stop, swap, or fork anywhere.
+**1. Control and fidelity converge on different timescales.**
+Direction accuracy reaches 100% at step 1000 and then stays flat for the remaining
+7000 steps, while PSNR/SSIM/FID keep improving to the very end. Neither validation
+loss nor any single metric shows this — we only saw it by evaluating all 16
+checkpoints.
 
-**1.1 Data.** We walk you through how to construct training-ready datasets paired with camera poses, and the full data processing pipeline that turns them into latents.
+Stated in **samples rather than steps**, because "iterations" is not portable across
+batch sizes: control saturates at roughly **32k samples seen** (1000 steps × batch 32
+≈ 0.74 epochs).
 
-**1.2 Training.** Including FSDP + sequence parallelism, single-/multi-node training, and the full distillation pipeline from a bidirectional diffusion model to a 4-step AR student:
+**2. The autoencoder, not the model, sets the blur floor.**
+Decoding a *real* latent back to pixels — no generation involved — gives **22.74 dB**.
+That is the hard ceiling at this resolution; our 18.40 dB is 81% of it. A good VAE at
+native resolution reaches 30+ dB; ours is low because 64×64 gives an 8×8 latent, far
+outside the regime the encoder was built for.
+
+This is a quantitative argument that higher resolution would raise the *ceiling*,
+rather than being cosmetic.
+
+---
+
+## How it works
+
+BAIR provides **30 actions per episode**, one per frame transition. Pooling them into
+a single vector is not merely suboptimal, it is **disqualifying**: the actions are
+displacements, so the mean of a back-and-forth motion is ≈ 0 and the model has no
+usable signal.
+
+So conditioning is **per latent frame**, injected through the model's *existing*
+per-frame timestep/AdaLN pathway rather than through the text stream:
 
 ```
-Phase 1                            Phase 2 — Distillation to Causal Few-Step
-─────────────────────              ────────────────────────────────────────────
-Bidirectional SFT      ──▶   Stage 1   Teacher Forcing AR Diffusion
-                             Stage 2a  Causal ODE  (proposed in [Causal Forcing](https://arxiv.org/abs/2602.02214))
-                             Stage 2b  Causal CD   (proposed in [Causal Forcing++](https://arxiv.org/abs/2605.15141))
-                             Stage 3   Asymmetric DMD with Self Rollout
-                                                ▼
-                                         4-step real-time
+actions (30×4) ── aligned to latent frames, FLATTENED not averaged ──▶ (F, 16)
+                                                                        │
+                            ActionEncoder  16→256→256→1536  (zero-init) │
+                                                                        ▼
+       e = time_embedding(t)  +  action_embed        ──▶ time_projection ──▶ AdaLN
+                                                            (shift/scale/gate,
+                                                             every DiT block)
 ```
 
-**1.3 Inference.**
+Alignment follows the VAE's causal temporal compression: latent 0 has no preceding
+action, latent *i* carries the 4 raw actions covering it. The encoder's final layer is
+**zero-initialised**, so at step 0 the model behaves exactly like the pretrained
+checkpoint and nothing is destroyed at training start.
 
-- ✅ 4-step DMD inference for HY Action2V / HY TI2V / Wan Action2V, multi-GPU sequence parallelism, camera-trajectory control via pose strings (`"a*4,w*8,s*7"`) or JSON files
-- 🚧 Inference acceleration [TBD]
+Adaptation is **LoRA rank 16** on `q, k, v, ffn.0, ffn.2`. A rank sweep (8/16/64)
+showed near-identical cost, so rank was chosen on quality grounds, not compute.
 
-### 2. Multi-Backbone Support
+Total change to upstream code: **15 lines across 3 files**.
 
-minWM supports two paths to arriving at an interactive world model.
+---
 
-#### 2.1 From Scratch: Bidirectional T2V Foundation → Real-Time World Model
+## Repository layout
 
-The HunyuanVideo 1.5 and Wan 2.1 lines walk through the full 4-stage pipeline — starting from a bidirectional T2V foundation model and ending at a 4-step autoregressive world model.
+Everything we wrote lives in [`lora_action/`](lora_action/):
 
+**Pipeline**
+| file | what it does |
+|---|---|
+| `extract_bair_windows.py` | BAIR TFRecord → sharded raw npz (TF venv, CPU) |
+| `build_bair_lmdb.py` | VAE-encode into an LMDB matching the repo's dataset schema, plus an `actions` field |
+| `bair_dataset.py` | dataset class; **the action↔latent-frame alignment lives here** |
+| `train_lora_action.py` | the training loop |
+| `evaluate.py` | 5 metrics, two modes, many checkpoints in one model load |
 
-| Backbone             | Architecture          | Params | Training       | Inference    |
-| -------------------- | --------------------- | ------ | -------------- | ------------ |
-| **Wan 2.1**          | Cross-attention + DiT | 1.3 B  | ✅ all 4 stages | ✅ 4-step DMD |
-| **HunyuanVideo 1.5** | MMDiT                 | 8 B    | ✅ all 4 stages | ✅ 4-step DMD |
+**Demos**
+| file | what it does |
+|---|---|
+| `generate_video.py` | one clip, a chosen action |
+| `generate_sequence.py` | a *different* action per latent frame within one clip |
+| `rollout.py` | sliding-window free rollout, one action per block |
+| `interactive_demo.ipynb` | button-driven demo; model stays resident so each press costs only sampling (~4.5 s) |
 
+**Diagnostics** (kept as a record of how conclusions were reached)
+`resolution_diagnostic.py`, `resolution_compare.py`, `cfg_test.py`, `cfg_visual.py`,
+`rollout_metrics.py`, `overfit_visual_check.py`, `real_training_benchmark.py`,
+`poc_action_injection.py`
 
+---
 
-Both lines share the same trainer / loss / dataset abstractions, so adding a third backbone is structurally a wrapper-and-config exercise.
-
-#### 2.2 Finetuning an Existing Video World Model 🚧 [TBD]
-
-The forthcoming `worldplay-finetune` entry will let you start from an already-trained video world model and adapt it to new conditions, scenes, or resolutions — without rerunning the 4-stage pipeline from scratch.
-
-### 3. Multi-Condition Injection
-
-We aim to support both multiple condition types and multiple injection methods, mixable along either axis.
-
-#### 3.1 Supported Conditions
-
-- ✅ Camera pose
-- 🚧 Human pose [TBD]
-
-#### 3.2 Supported Injection Methods
-
-- ✅ ProPE
-- 🚧 Latent concat [TBD]
-- 🚧 Cross-attention [TBD]
-
-### 4. Claude Skills — Modify the Framework with an LLM Assistant
-We are packaging our project experience across the CF / CF++ pipeline as Claude skills, so that an LLM assistant can help users debug failures and integrate new models without reverse-engineering the whole repo.
-
-- 🐛 **`debug-world-model`** — collected failure modes from the training pipeline (loss NaN, frame-to-frame jitter, camera drift, memory attenuation, distillation collapse, …). Claude diagnoses likely root causes from your symptoms instead of guessing.
-- 🔌 **`integrate-new-backbone`** — step-by-step recipe for plugging a new video DiT into minWM, grounded in the HunyuanVideo and Wan reference integrations — e.g. *"look at how HY does teacher forcing here, do the same for your model there"*.
-
-### 5. Onboarding Knowledge — for Newcomers to World Models
-
-- `onboarding-world-model`
-
-A third Claude skill aimed at researchers entering the world-model space for the first time. Two parts:
-
-- 🎓 **Foundations** — the minimal background to follow the pipeline: Teacher Forcing for AR diffusion training and Causal Forcing & Causal Forcing++ for AR diffusion distillation.
-- 🪤 **Pitfalls** — the non-obvious mistakes we hit while building minWM, distilled so you don't repeat them.
-
-Intended audience: graduate students, independent researchers, and junior labs that want to enter the world-model space without spending three months reverse-engineering existing repos.
-
-## 🛠️ Installation
+## Reproducing
 
 ```bash
-conda create -n minwm python=3.10 -y 
-conda activate minwm
-pip install -r requirements.txt
-pip install flash-attn --no-build-isolation
-export PYTHONPATH="$PWD/HY15:$PWD/Wan21:$PWD/shared:$PYTHONPATH"
+# 1. data  (~17 min for the VAE encode)
+python lora_action/extract_bair_windows.py --split train --out_dir /tmp/bair_raw/train
+python lora_action/build_bair_lmdb.py --in_dir /tmp/bair_raw/train --out_dir /tmp/bair_lmdb/train
+
+# 2. sanity check FIRST -- loss should approach zero on a single batch
+python lora_action/train_lora_action.py --overfit_single_batch --max_steps 300
+
+# 3. train  (~7.6 h for 8000 steps on one A100)
+python lora_action/train_lora_action.py --rank 16 --batch_size 32 --max_steps 8000 \
+    --lr_lora 2e-4 --lr_action 6e-4 --checkpoint_every 500 --val_every 500
+
+# 4. evaluate  (all checkpoints, one model load)
+python lora_action/evaluate.py --n_scenes 64
 ```
 
-<details> <summary> 🧱 Model Checkpoints (Click to expand) </summary> 
+Requires `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and `USER`/`LOGNAME`/`HOME`
+set — see [`CLAUDE.md`](CLAUDE.md) for the cluster-specific gotchas.
 
-All weights live under `./ckpts/` after download.
+Peak memory is **16.7 GB** at batch 32; batch size barely affects it, since ~15 GB is
+fixed model weights and activations are negligible at this token count.
 
+---
 
-| Checkpoint                                                                | Backbone | Stage                               | Use case                               | Download                                              |
-| ------------------------------------------------------------------------- | -------- | ----------------------------------- | -------------------------------------- | ----------------------------------------------------- |
-| `Wan21/Action2V/{bidirectional,ar_diffusion_tf,causal_ode,causal_cd,dmd}` | Wan 2.1  | Same 4 stages                       | Wan pipeline                           | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HunyuanVideo-1.5` (base)                                                 | HY 1.5   | —                                   | Required by both HY pipelines          | [HF](https://huggingface.co/tencent/HunyuanVideo-1.5) |
-| `Wan2.1-T2V-1.3B` (base)                                                  | Wan 2.1  | —                                   | Required by Wan pipeline               | [HF](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)   |
-| `HY15/Action2V/bidirectional`                                             | HY 1.5   | Phase 1 SFT                         | Starting point for HY Action2V Phase 2 | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HY15/Action2V/ar_diffusion_tf`                                           | HY 1.5   | Phase 2 Stage 1                     | Teacher Forcing AR diffusion           | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HY15/Action2V/causal_ode`                                                | HY 1.5   | Phase 2 Stage 2a (proposed in Causal Forcing)   | DMD initialization               | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HY15/Action2V/causal_cd`                                                 | HY 1.5   | Phase 2 Stage 2b (proposed in Causal Forcing++) | DMD initialization               | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HY15/Action2V/dmd`                                                       | HY 1.5   | Phase 2 Stage 3                     | **4-step real-time inference**         | [HF](https://huggingface.co/MIN-Lab/minWM)            |
-| `HY15/TI2V/{bidirectional,ar_diffusion_tf,causal_ode,causal_cd,dmd}`      | HY 1.5   | Same 4 stages, TI2V variant         | TI2V pipeline                          | [HF](https://huggingface.co/MIN-Lab/minWM)            |
+## Known limitations
 
-</details>
+- **Free rollouts degrade.** All reported metrics use teacher-forced context: real
+  frames in, one block generated. When the model consumes its *own* output block after
+  block, quality falls off and per-block direction accuracy drops towards chance by ~6
+  blocks. This is exposure bias, and it is exactly why minWM places self-forcing
+  (Stage 2/3) *after* the teacher-forcing stage we adapted. The repo's own
+  `noise_augmentation_max_timestep` is a cheap partial mitigation and is currently 0.
+- **Absolute vs relative control.** Relative direction accuracy is 100%; absolute is
+  ~87%, because the arm's absolute trajectory is also driven by scene dynamics the
+  action does not override.
+- **Classifier-free guidance does not help here.** We trained a null action embedding
+  for it, swept w ∈ {1, 1.5, 2, 3}, and measured a clean fidelity-for-control trade —
+  but relative direction accuracy is already saturated at 100%, so CFG amplifies
+  nothing while costing fidelity and a second forward pass. Reported as a measured
+  negative result.
+- **FID/FVD sample counts** are far below convention (~1024 frames / 256 clips), so
+  those are valid only as *relative* comparisons between our own checkpoints.
+- **64×64 is the dataset's native resolution.** The original 512×640 BAIR release is
+  not publicly available; the Berkeley server hosts only the 64×64 tar.
 
-## 🚀 Quick Start
+---
 
-> The fastest path: install → download three DMD checkpoints → run three demo commands. Full reproduction (all 4 training stages × 3 model lines) is in [§ Data & Training & Reproduction](#️-data--training--reproduction).
+## Credits
 
-### 1. Download the demo checkpoints
+Base framework: [minWM](https://github.com/shengshu-ai/minWM) (Wan2.1-T2V-1.3B).
+LoRA recipe for Wan2.1 adapted from [VideoX-Fun](https://github.com/aigc-apps/VideoX-Fun)
+— used only for *how* to inject LoRA, not as the base pipeline, since it is
+bidirectional and has no autoregressive rollout.
+Dataset: [BAIR robot pushing](https://sites.google.com/view/sna-visual-mpc/).
 
-```bash
-# Wan base (T2V-1.3B)
-hf download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./ckpts/Wan2.1-T2V-1.3B 
-
-# Code hardcodes the load path; create a symlink.
-mkdir -p Wan21/wan_models
-ln -s "$(realpath ./ckpts/Wan2.1-T2V-1.3B)" Wan21/wan_models/Wan2.1-T2V-1.3B
-
-
-# HY base + text/vision encoders (required by HY pipelines)
-hf download tencent/HunyuanVideo-1.5 --local-dir ./ckpts/HunyuanVideo-1.5 \
-    --include "vae/*"  "scheduler/*" "transformer/480p_i2v/*"
-hf download Qwen/Qwen2.5-VL-7B-Instruct --local-dir ./ckpts/HunyuanVideo-1.5/text_encoder/llm
-hf download google/byt5-small           --local-dir ./ckpts/HunyuanVideo-1.5/text_encoder/byt5-small
-modelscope download --model AI-ModelScope/Glyph-SDXL-v2 \
-    --local_dir ./ckpts/HunyuanVideo-1.5/text_encoder/Glyph-SDXL-v2
-hf download black-forest-labs/FLUX.1-Redux-dev \
-    --local-dir ./ckpts/HunyuanVideo-1.5/vision_encoder/siglip --token <your_hf_token>
-
-
-# 4-step DMD checkpoints
-## Wan Action2V (DMD, 4-step)
-hf download MIN-Lab/minWM --local-dir ./ckpts \
-    --include "Wan21/Action2V/dmd/*"
-
-## HY Action2V (DMD, 4-step, worldplay teacher) 
-hf download MIN-Lab/minWM --local-dir ./ckpts \
-    --include "HY15/Action2V/dmd/*"
-
-# HY Action2V (DMD, 4-step, our bidirectional teacher) 
-# hf download MIN-Lab/minWM --local-dir ./ckpts \
-#     --include "HY15/Action2V/dmd_ourbi/*"
-
-## HY TI2V (DMD, 4-step)
-hf download MIN-Lab/minWM --local-dir ./ckpts \
-    --include "HY15/TI2V/dmd/*"
-```
-
-
-### 2. Run the three demos
-
-```bash
-# 2.1  Wan Action2V (4-step DMD, camera control)
-OUTPUT_FOLDER=./outputs/quickstart_wan_action2v \
-TRAJECTORY_PATH="Wan21/prompts/trajectories.txt" \
-    bash Wan21/scripts/inference/run_infer_causal_camera.sh
-
-# 2.2  HY Action2V (4-step DMD, camera control)
-TRANSFORMER_DIR=./ckpts/HY15/Action2V/dmd \
-OUTPUT_DIR=./outputs/quickstart_hy_action2v \
-    bash HY15/scripts/inference/run_infer_causal_camera.sh
-
-# 2.3  HY TI2V (4-step DMD)
-TRANSFORMER_DIR=./ckpts/HY15/TI2V/dmd \
-OUTPUT_DIR=./outputs/quickstart_hy_ti2v \
-    bash HY15/scripts/inference/run_infer_causal.sh
-
-```
-
-> **Camera control.** For HY Action2V, trajectories are read per-sample from `assets/example.json` under the `"trajectory"` field. Format: `w/s/a/d` keys with `*N` repeats; comma-separated segments — e.g. `"a*4,w*8,s*7"`.
-
-## ⚙️ Data & Training & Reproduction
-
-Three model lines × two phases × four stages, each documented as **(1) Model download → (2) Data preparation → (3) Training script → (4) Validation**. Full reproduction guides are split by backbone:
-
-- 📗 [`training_wan.md`](training_wan.md)
-    -  **Wan Action2V**  (Wan 2.1 backbone)
-- 📘 [`training_hunyuan.md`](training_hunyuan.md)
-    — **HY Action2V** (HY1.5-8B backbone)
-    - **HY TI2V** (HY1.5-8B backbone)
-
-## 📚 Citation
-
-If minWM helps your research, please cite:
-
-```bibtex
-
-# ICML 2026
-@article{zhu2026causal,
-  title={Causal Forcing: Autoregressive Diffusion Distillation Done Right for High-Quality Real-Time Interactive Video Generation},
-  author={Zhu, Hongzhou and Zhao, Min and He, Guande and Su, Hang and Li, Chongxuan and Zhu, Jun},
-  journal={arXiv preprint arXiv:2602.02214},
-  year={2026}
-}
-
-# Technical Report
-@article{zhao2026causal,
-  title={Causal Forcing++: Scalable Few-Step Autoregressive Diffusion Distillation for Real-Time Interactive Video Generation},
-  author={Zhao, Min and Zhu, Hongzhou and Zheng, Kaiwen and Zhou, Zihan and Yan, Bokai and Li, Xinyuan and Yang, Xiao and Li, Chongxuan and Zhu, Jun},
-  journal={arXiv preprint arXiv:2605.15141},
-  year={2026}
-}
-
-# Technical Report
-@article{zhao2026minwm,
-  title={minWM: A Full-Stack Open-Source Framework for Real-Time Interactive Video World Models},
-  author={Zhao, Min and Zhu, Hongzhou and Yan, Bokai and Zhou, Zihan and Chen, Yimin and Sun, Wenqiang and Zheng, Kaiwen and He, Guande and Yang, Xiao and Li, Chongxuan and others},
-  journal={arXiv preprint arXiv:2605.30263},
-  year={2026}
-}
-
-```
-
-## Contact
-
-For questions, suggestions, or collaboration, please open a GitHub issue or contact: [gracezhao1997@gmail.com](mailto:gracezhao1997@gmail.com).
-
-## 🙏 Acknowledgements
-
-minWM stands on the shoulders of giants. We thank the authors and maintainers of [HunyuanVideo 1.5](https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5), [HY-WorldPlay](https://github.com/Tencent-Hunyuan/HY-WorldPlay), [Wan 2.1](https://github.com/Wan-AI/Wan), [Causal-Forcing](https://github.com/thu-ml/Causal-Forcing), and [FastVideo](https://github.com/hao-ai-lab/FastVideo) for their open-source contributions, which made this framework possible.
+Mentors: Nedko Savov (INSAIT) and Danilo, whose questions drove several of the
+measurements above.
