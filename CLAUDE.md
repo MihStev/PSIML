@@ -1279,6 +1279,38 @@ urađena, pa do tada tabelu prijavljivati ISPRAVLJENU, ne sirovu iz JSON-a.
 
 **Status:** commit-ovano (`8fb3083`).
 
+## GOTCHAS: Jupyter widgeti i higijena GPU-a (13.08, veče)
+
+**`ipykernel` 7.x LOMI `ipywidgets` 8.x — widgeti se ne renderuju.** Simptom: dugmad se ne pojave,
+bez ikakve greške; `W.Button(...)` se uredno kreira u kernelu (`model_id` postoji), ali poruka ne
+stigne do frontenda. **Promjena browsera NE pomaže** (nije keš), hard refresh NE pomaže.
+- Serverska strana je bila ispravna: `@jupyter-widgets/jupyterlab-manager v5.0.15 enabled OK`,
+  `jupyterlab_widgets 3.0.15`, `comm 0.2.3` na obje strane.
+- Uzrok: `ipykernel` 7 je promijenio rukovanje comm kanalima, a `ipywidgets` 8.1.x je pisan za 6.x.
+- **Popravka:** `pip install "ipykernel>=6.29,<7"` u `pytorch-minwm` venv → 6.31.0. Traži restart
+  kernela (dakle i ponovno učitavanje modela, ~6 min).
+- **Jeftina provjera prije ulaganja 6 minuta:** restartuj kernel, pusti SAMO
+  `import ipywidgets as W; W.Button(description='TEST')`. Ako se dugme pojavi, popravka je uspjela.
+
+**Fallback bez widgeta:** `lora_action/demo_fallback_cell.py` — isti demo preko poziva funkcija
+(`go('up')`, `go('up','down')`, `reset()`, `save()`) umjesto dugmadi. Radi uvijek, ne zavisi od
+frontenda, i za prezentaciju je čak čitljiviji jer se vidi ŠTA se komanduje.
+
+**Higijena GPU-a (bitno kad se dijeli kartica):**
+- Jupyter kernel sa učitanim modelom drži **~15 GB GPU-a i kad ništa ne radi** (0% util). Mora se
+  ugasiti prije velikih poslova, inače se dva posla bore za karticu.
+- `torch._inductor` iza kernela ostavi **~30 compile radnika** (~0.4 GB RAM svaki, ~12 GB ukupno).
+  Čiste se sa `pkill -f "torch/_inductor/compile_worker"`.
+- Provjera ko drži karticu: `ps -eo pid,etime,%cpu,rss,cmd | grep ipykernel` + `nvidia-smi`.
+- **NE ubijati tuđe kernele bez pitanja** — dijelimo nalog, pa `ps` ne razlikuje čiji je koji.
+
+## STATUS 13.08 uveče
+
+- Videi za mentore spakovani i podijeljeni preko Google Drive-a (glavni rezultat / ograničenja / demo).
+- Mihajlo završio slobodne rollout-e; sledeće radi statistiku na više podataka.
+- **Večeras: DMD fine-tuning preko noći.** Komanda spremna (parametrizovan `--base_checkpoint`).
+- Sutra: testovi, debug, rezultati, prezentacija, dublje upoznavanje sa kodom.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
