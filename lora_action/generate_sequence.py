@@ -64,6 +64,8 @@ def parse_args():
     p.add_argument("--context_idx", type=int, default=3)
     p.add_argument("--program", default="all")
     p.add_argument("--n_steps", type=int, default=24)
+    p.add_argument("--real_dims23", action="store_true",
+                    help="use the episode's real dims 2/3 instead of dataset-mean constants;\n                          the eval used real values, the first demo run did not -- this isolates\n                          whether freezing them weakened the conditioning")
     p.add_argument("--out_dir", default="/home/mls10/logs/gen_sequences")
     return p.parse_args()
 
@@ -125,6 +127,9 @@ def main():
         retrieve_row_from_lmdb(env, "latents", np.float16, args.context_idx,
                                shape=lat_shape[1:]).astype(np.float32)
     ).to(device=device, dtype=torch.bfloat16).unsqueeze(0)
+    act_shape = get_array_shape_from_lmdb(env, "actions")
+    real_act = retrieve_row_from_lmdb(env, "actions", np.float32, args.context_idx,
+                                       shape=act_shape[1:])   # (30,4)
 
     vm = torch.eye(4, device=device, dtype=torch.bfloat16).view(1, 1, 4, 4).repeat(1, NUM_FRAMES, 1, 1)
     ks = torch.tensor([[0.5, 0, 0.5], [0, 0.5, 0.5], [0, 0, 1]], device=device, dtype=torch.bfloat16) \
@@ -146,7 +151,13 @@ def main():
         apl = np.zeros((NUM_FRAMES, 16), dtype=np.float32)
         for i, name in enumerate(prog, start=1):
             dx, dy = DIRS[name]
-            apl[i] = np.tile([dx, dy, 0.5, 0.25], 4)   # dims 2/3 at their dataset means
+            if args.real_dims23:
+                # keep the episode's own dims 2/3, override only the displacement dims
+                chunk = real_act[4 * (i - 1):4 * i].copy()
+                chunk[:, 0], chunk[:, 1] = dx, dy
+                apl[i] = chunk.flatten()
+            else:
+                apl[i] = np.tile([dx, dy, 0.5, 0.25], 4)   # dims 2/3 at their dataset means
         a = torch.tensor(apl, device=device).unsqueeze(0)
         an = (a - a_mean) / a_std
         an[:, 0, :] = 0.0
@@ -190,16 +201,25 @@ def main():
     print(f"\n=== saved {png} ===", flush=True)
     print("    rows: " + " | ".join(nm for nm, _ in rows), flush=True)
 
-    print("\n=== DID THE PROGRAM REVERSE? (drift per half, pixels) ===", flush=True)
-    print(f"{'program':>16} {'1st half':>18} {'2nd half':>18}   verdict", flush=True)
+    # NOTE: an earlier version only checked whether the sign FLIPPED, not whether each
+    # half moved the way it was told. That reported 5/6 "reversal seen" when in fact
+    # most halves moved the wrong way. This checks the commanded direction per half.
+    want = {"up": (1, -1), "down": (1, +1), "right": (0, +1), "left": (0, -1), "still": None}
+    print("\n=== DID EACH HALF MOVE AS COMMANDED? (drift per half, pixels) ===", flush=True)
+    print(f"{'program':>16} {'1st half':>18} {'2nd half':>18}  1st  2nd", flush=True)
+    n_ok = n_tot = 0
     for name, first, last, s1, s2 in summaries:
-        axis = 1 if first in ("up", "down") else 0     # which axis the program commands
-        expect_flip = (first != last)
-        flipped = (s1[axis] * s2[axis]) < 0
-        verdict = ("reversal seen" if flipped else "no reversal") if expect_flip else \
-                  ("consistent" if not flipped else "unexpected flip")
-        ok = "OK" if (flipped == expect_flip) else "--"
-        print(f"{name:>16}  ({s1[0]:+6.2f},{s1[1]:+6.2f})  ({s2[0]:+6.2f},{s2[1]:+6.2f})   {verdict} [{ok}]", flush=True)
+        marks = []
+        for cmd, seg in ((first, s1), (last, s2)):
+            w = want[cmd]
+            if w is None:
+                marks.append(" - "); continue
+            axis, sign = w
+            ok = (seg[axis] * sign) > 0
+            n_tot += 1; n_ok += int(ok)
+            marks.append(" OK" if ok else " X ")
+        print(f"{name:>16}  ({s1[0]:+6.2f},{s1[1]:+6.2f})  ({s2[0]:+6.2f},{s2[1]:+6.2f}) {marks[0]} {marks[1]}", flush=True)
+    print(f"\n  correct halves: {n_ok}/{n_tot} ({100*n_ok/max(n_tot,1):.0f}%)", flush=True)
 
     try:
         import imageio

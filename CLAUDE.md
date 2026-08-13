@@ -1039,6 +1039,53 @@ lokalnu varijaciju, pa je artefakti podižu jednako kao detalj. Ne koristiti je.
 **Posljedica za prioritete:** ovo je tvrd, vizuelan argument da nema smisla ulagati u model dok je
 plafon ovoliko nizak — veća rezolucija podiže PLAFON, sve ostalo se bori za ostatak.
 
+## FIDBEK DRUGOG MENTORA (Danilo, 13.08) — dvije prave rupe
+
+**1. "FID je vremenski slijep, dodajte FVD."** Tačno i posebno relevantno za nas: FID skuplja
+per-frame Inception odlike, pa video sa realističnim pojedinačnim frejmovima ali fizički pogrešnim
+kretanjem prolazi dobro. Naša cijela tvrdnja je o KRETANJU, dakle FID mjeri baš ono što ne testiramo.
+- Nije u `torchmetrics` → traži I3D (Kinetics) backbone zasebno. Planirano za dan 4.
+- Ograde koje treba SAMI navesti: FVD normalno traži stotine-hiljade videa (mi imamo 256), a
+  standardne implementacije skaliraju na 224×224 dok su naši frejmovi 64×64 → I3D bi uglavnom
+  gledao artefakte uvećavanja. Prijaviti kao RELATIVNU mjeru između naših checkpointa.
+
+**2. "Je li sve generisanje do sad teacher-forced? Imate li slobodne rollout-e?"**
+**Najoštrije zapažanje dana. Odgovor: DA, svi prijavljeni brojevi su teacher-forced.**
+- U svim mjerenjima kontekst su PRAVI frejmovi 0-3, generišu se 4-7 u jednom bloku, `clean_x` je
+  pravi latent. To važi za cijelu tabelu evaluacije, CFG sweep i rezultate po akcijama.
+- **Slobodni rollout POSTOJI ali samo kvalitativno** — `rollout.py` (danas): kontekst bloka N je
+  GENERISANI izlaz bloka N-1. Dva runa: `up up down down` (4 bloka), `right ×6` (6 blokova).
+
+**Šta rollout pokazuje (nepovoljno):**
+- Magnitude latenta ostaju u ispravnom opsegu (±3.2 vs pravi ±3-4) kroz 4 bloka — nema numeričke
+  eksplozije.
+- ALI kvalitet slike progresivno propada; na 6 blokova izlaz je nekoherentan.
+- Tačnost komandovanog smjera po bloku je otprilike slučajna (2/6 na `right ×6`), naspram
+  ~87% aps. / 100% rel. u teacher-forced režimu.
+
+**Mehanizam (exposure bias):** model je viđao samo ČIST, pravi kontekst. U rollout-u jede sopstveni
+izlaz — uslovni prosjek, blago zamućen i van distribucije — koji se tretira kao ground truth. Greška
+se MNOŽI, ne sabira. Zamućenje hrani samo sebe: zamućen kontekst = dvosmislenija scena = model
+usrednjava preko više budućnosti = još zamućenije. Zato minWM ima Stage 2/3 POSLIJE Stage 1, i zato
+je Nedko rekao "sigurniji, ali neće moći dug rollout".
+
+**Dvije konkretne popravke, nijedna uzeta:**
+- `noise_augmentation_max_timestep` POSTOJI u repou i kod nas je **0**. Kad je > 0, na čist kontekst
+  se tokom treninga dodaje šum → model nauči da toleriše nesavršen kontekst. Jedna linija konfiga,
+  ali 7.6h ponovnog treninga.
+- Stage 2 self-forcing — prava popravka, cijela dodatna faza treninga.
+
+**OTVORENA RUPA:** nismo pustili metrike NAD slobodnim rollout-ima. Kriva degradacije (metrike vs
+dužina rollout-a) je očigledno sledeće mjerenje i jeftino je — kod postoji.
+
+**ODLUKA (dan 3):** prihvatamo ograničenje i prijavljujemo ga. Razlozi: (1) posljedica je namjernog
+izbora Stage 1 koji je mentor preporučio kao sigurniji, (2) naš isporučivi rezultat je KRATAK rollout
+sa kontrolom, i to radi, (3) 7.6h treninga za neizvjesno poboljšanje sporedne osobine, dva dana prije
+roka, nije dobra razmjena. Ide u prezentaciju kao izmjereno ograničenje sa objašnjenim mehanizmom i
+dvije identifikovane popravke — što je jače nego da ga nismo primijetili.
+
+Izvještaj za oba mentora: `status_report_day3.md` (u repou i u `/home/mls10/`).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
