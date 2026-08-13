@@ -1180,6 +1180,39 @@ naših dubina.** Ista ograda već važi za naš FID.
 
 Pokretanje: `python rollout_metrics.py --max_depth 6 --n_scenes 32` (~15 min).
 
+## `rollout_metrics.py` — POKRENUT, REZULTATI (13.08, 13:13-13:43, Mihajlova sesija)
+
+Trajalo ~30 min (duže od procijenjenih 15 — hladan start modela pojeo dobar dio). Rezultati u
+`/home/mls10/logs/rollout_metrics.json`, sirov log `/home/mls10/logs/rollout_metrics_run.log`.
+
+```
+depth  frames    FVD*     FID     div  dir_rel  n_dir
+    1      17   106.4   99.57   48.19   0.969     32
+    2      33   157.6  137.90   52.84   0.531     32
+    3      49   169.8  154.63   55.68   0.710     31
+    4      65   176.1  167.56   58.54   0.714     28
+    5      81   176.7  179.60   61.01   0.792     24
+    6      97   183.5  183.83   63.22   0.846     26
+```
+
+**Glavni nalaz — potvrđuje Danilovu sumnju, uredan i jasan signal.** FVD*/FID oboje monotono
+rastu (pogoršavaju se) sa dubinom — FVD* 106→184, FID 100→184, skoro udvostručeno od dubine 1 do
+6. Ovo je čist dokaz exposure bias mehanizma opisanog gore (grešaka se gomila blok-po-blok kad
+model jede sopstveni izlaz umjesto pravog konteksta). Prijaviti oba mentora ovim brojevima —
+konačan, kvantitativan odgovor na Danilovo pitanje #2.
+
+**Neočekivano — `dir_rel` NIJE monotono opadanje.** Nagli pad na dubini 2 (96.9%→53.1%, blizu
+slučajnog pogađanja), pa POSTEPENI OPORAVAK do 84.6% na dubini 6. Suprotno prostoj "sve se
+pogoršava sa dubinom" priči. **Ne uzimati kao čist nalaz bez opreza** (isto pravilo kao gore, "NE
+zaključivati prerano" — ovo bi bio šesti-sedmi put): `n_dir` pada sa 32 na 26 sa dubinom (detektor
+ruke po crvenim pikselima ponekad ne uspije naći ruku u sve zamućenijim kasnijim frejmovima, pa
+manji i sve nasumičniji uzorak po dubini) — vjerovatno dobrim dijelom šum, ali vrijedi zabilježiti,
+ne ignorisati. **Ne koristiti ovaj broj kao dokaz da se kontrola "oporavlja" sa dubinom** dok se ne
+provjeri na većem uzorku ili drugačijim detektorom ruke.
+
+**Status:** necommit-ovano u trenutku pisanja ove sekcije — pitati je li commit-ovati odmah ili
+čekati da se doda i FVD*/FID kriva u prezentaciju.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

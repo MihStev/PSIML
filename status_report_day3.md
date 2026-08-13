@@ -63,9 +63,36 @@ described the teacher-forcing checkpoint as "safer, but won't do long rollout".
   to tolerate imperfect context. One config line, but a 7.6h retrain.
 - Stage 2 self-forcing — the proper fix, a whole additional training stage.
 
-**The honest gap:** we have not run the metric suite *on* free rollouts. Quantifying
-the degradation curve (metrics vs rollout length) is the obvious next measurement and
-is cheap, since the code exists.
+**Update — measured (Aug 13, later the same day).** `rollout_metrics.py`: same free
+rollout as above, but now scored with FVD* (Fréchet distance over torchvision S3D
+features — a Kinetics-400 backbone, not the canonical I3D checkpoint, so labelled
+`FVD*` and read only as a relative measure across our own depths, same caveat as our
+FID) plus FID, action-swap divergence, and direction accuracy, all as a function of
+rollout depth. 32 held-out scenes, depths 1–6 (17–97 frames), checkpoint step 8000.
+
+```
+depth  frames    FVD*     FID     div  dir_rel  n_dir
+    1      17   106.4   99.57   48.19   0.969     32
+    2      33   157.6  137.90   52.84   0.531     32
+    3      49   169.8  154.63   55.68   0.710     31
+    4      65   176.1  167.56   58.54   0.714     28
+    5      81   176.7  179.60   61.01   0.792     24
+    6      97   183.5  183.83   63.22   0.846     26
+```
+
+**Headline finding — quantifies what was qualitative before.** FVD* and FID both rise
+monotonically with depth (FVD* 106→184, FID 100→184, roughly doubling from depth 1 to
+6). This is a clean, unambiguous confirmation of the exposure-bias mechanism described
+above: quality degrades steadily as the model consumes more of its own output. This is
+our answer to Danilo's question #2, with numbers attached.
+
+**One result we are flagging, not claiming.** Direction accuracy is *not* a clean
+decay: it drops sharply at depth 2 (96.9%→53.1%, near chance) then partially recovers
+to 84.6% by depth 6. We are not treating this as a real "recovery" effect — `n_dir`
+falls from 32 to 24-26 as depth increases (the pixel-colour arm detector fails to find
+the arm more often in the blurrier later frames, shrinking and biasing the sample), and
+this is a single run at one seed, not averaged over repeats. Flagged honestly rather
+than either oversold or discarded; would need multiple seeds to say more.
 
 ---
 
@@ -163,9 +190,8 @@ the model had the physics right.
 
 ## 7. Next
 
-1. **FVD** (Danilo) — day 4.
-2. **Metrics on free rollouts** — quantify the degradation curve vs rollout length.
-   Cheap; the code exists.
+1. **FVD** (Danilo) — done above, as `FVD*` (S3D-based, see caveat in §1).
+2. ~~Metrics on free rollouts~~ — done above (§2 update).
 3. **LoRA on the distilled DMD checkpoint** (Nedko's secondary question) — still
    open. Worth noting the memory premise does not hold: `model/dmd.py` holds three
    transformer copies, so real DMD training costs ~3× more, not less; plain LoRA on
