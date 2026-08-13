@@ -61,11 +61,9 @@ futures, producing more blur. This is textbook exposure bias, and it is precisel
 minWM places Stage 2/3 (self-forcing) *after* Stage 1. Nedko predicted this when he
 described the teacher-forcing checkpoint as "safer, but won't do long rollout".
 
-**Two concrete fixes we identified, neither taken:**
-- `noise_augmentation_max_timestep` already exists in the repo and is **0** in our
-  config. Setting it > 0 noises the clean context during training so the model learns
-  to tolerate imperfect context. One config line, but a 7.6h retrain.
-- Stage 2 self-forcing — the proper fix, a whole additional training stage.
+The proper fix is Stage 2 self-forcing — training the model on its own outputs so it
+learns to tolerate them — which is a whole additional training stage in minWM's own
+pipeline, beyond what we adapted.
 
 **Update — measured (Aug 13, later the same day).** `rollout_metrics.py`: same free
 rollout as above, but now scored with FVD* (Fréchet distance over torchvision S3D
@@ -231,55 +229,44 @@ the model had the physics right.
 
 ## 7. Where we would value your opinion
 
-We have roughly **1.5 days left**, of which the presentation needs a solid half. That
-realistically leaves **one substantial experiment**, plus one cheap one. We have a
-default in mind but would rather hear you first — all four options are prepared and
-could start tonight.
+Before committing the remaining time we would rather hear you than decide alone. Three
+options are prepared and could start tonight.
 
-**A. More statistics on what we already have** — *cheap, ~30 min*
-Our per-scene results (rollout depth, direction accuracy) come from a single seed at
-n=32, with ±17% confidence intervals. Multiple seeds and proper error bars would let us
-state which of our differences are real. Also fixes the one-line survivorship-bias
-issue in §2. Low risk, strengthens claims we have already made rather than adding new
-ones.
+**A. More statistics on what we already have.**
+Our per-scene results — rollout depth, direction accuracy — come from a single seed at
+n=32, with confidence intervals wide enough (±17%) that several of the differences we
+report are not individually resolvable. Multiple seeds and proper error bars would let
+us say which effects are real. Low risk: it strengthens claims we have already made
+rather than adding new ones.
 
-**B. LoRA on the distilled (DMD) checkpoint** — *~4.5 h, runs overnight*
-Nedko's secondary question, still open. One correction to the original framing: the
-memory premise does not hold — `model/dmd.py` holds three transformer copies, so true
-DMD training costs ~3× more, not less, and plain LoRA on the DMD checkpoint costs the
+**B. LoRA on the distilled (DMD) checkpoint.**
+Your secondary question, still open. One correction to the original framing: the memory
+premise does not hold — `model/dmd.py` holds three transformer copies, so true DMD
+training costs about 3× more, not less, and plain LoRA on the DMD checkpoint costs the
 same as what we already run. The real benefit is **inference speed**: 4 denoising steps
-instead of our 24, which is what would turn the interactive demo from clunky (4.5 s per
-press) into genuinely real-time.
-Its risk is also its interest: the model was distilled to *skip* steps, and our
-flow-matching loss teaches it to predict the true flow again — i.e. partially undoing
-the distillation. All three outcomes (4-step still works / distillation undone /
-unstable) are reportable findings, so this is a measurement rather than a gamble.
+instead of our 24, which is what would turn the interactive demo from clunky into
+genuinely real-time.
 
-**C. Retrain with `noise_augmentation_max_timestep > 0`** — *~7.6 h, runs overnight*
-The repo's built-in mitigation for exactly the exposure bias we measured in §2; it is
-currently 0 in our config. One config line. Would plausibly extend usable rollout depth
-beyond one block, but by an unknown amount, and it costs the same night as B.
+Its risk is also what makes it interesting: the model was distilled to *skip* steps, and
+our flow-matching loss teaches it to predict the true flow again — partially undoing the
+distillation. All three outcomes (4-step still works / distillation undone / training
+unstable) are reportable findings, so it is a measurement rather than a gamble.
 
-**D. Stop experimenting and put everything into the presentation.**
-We already have a complete result: action conditioning verified on held-out data in
-both axes, a full metric sweep, the VAE ceiling, and a measured degradation curve.
-Nothing below depends on further runs.
+**C. Stop experimenting and consolidate.**
+We already have a complete result: action conditioning verified on held-out data in both
+axes, a full metric sweep across 16 checkpoints, the VAE ceiling, and a measured
+degradation curve for free rollouts. Nothing in it depends on further runs.
 
-**Our default if we do not hear otherwise: A tonight (cheap, tightens existing claims),
-then B overnight, then D tomorrow.** We are choosing B over C because it answers a
-question you posed and produces a demo asset, whereas C improves a secondary property
-we are already reporting honestly as a limitation.
+Our inclination is A first since it is low-risk and tightens existing claims, then B
+because it answers a question you raised and produces a demo asset. But we would rather
+follow your judgement than our own here.
+
+The presentation itself still has to be built, so whatever we run has to leave room for
+that.
 
 **One thing we are deliberately not doing:** higher-resolution training. The original
 512×640 BAIR is not publicly available — the Berkeley server hosts only the 64×64 v0
 tar, byte-identical to our copy, and the tar's own arithmetic confirms 64×64. RoboNet
 128 exists but mixes four labs' robots and cameras, so it would need filtering and a
-per-view conditioning flag; Bridge's full set is 441 GB. Documented as future work,
-with the VAE-ceiling measurement (§4) as the quantitative justification.
-
-**Also open, if you have a view:** for the 10-minute presentation, is the more useful
-headline (a) action conditioning works in 2D on unseen scenes, (b) control and fidelity
-converge on *different* timescales — control saturates at ~32k samples while fidelity
-improves throughout, or (c) the autoencoder, not the model, sets the quality ceiling at
-this resolution? We lean towards (b) as the least obvious and most transferable, with
-(a) as the foundation and (c) as the bridge to future work.
+per-view conditioning flag; Bridge's full set is 441 GB. Documented as future work, with
+the VAE-ceiling measurement (§4) as the quantitative justification.
