@@ -76,6 +76,12 @@ def parse_args():
     p.add_argument("--out_json", default="/home/mls10/logs/eval_results.json")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--base_checkpoint", default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt")
+    p.add_argument("--no_finetune", action="store_true",
+                    help="BASELINE: evaluate the pretrained model WITHOUT our LoRA and WITHOUT\n                          action conditioning. Answers 'what did the finetuning actually buy?'.\n                          Divergence/direction must come out at chance -- there is no path for\n                          the action to enter the network at all.")
+    p.add_argument("--noise_floor", action="store_true",
+                    help="CONTROL: run MODE B with the SAME action twice. The sampler draws\n                          fresh torch.randn_like at every intermediate re-noising step, so two\n                          calls are NOT bit-identical even with identical conditioning. This\n                          measures how much of the reported divergence is just that noise.")
+    p.add_argument("--null_action", action="store_true",
+                    help="MODE A uses the trained null_action_embedding instead of the real\n                          action: the model has all its machinery but is uninformed, not misled.")
     p.add_argument("--dmd_schedule", action="store_true",
                     help="use the distilled model's own 4-step schedule (config denoising_step_list\n                          [1000,750,500,250], warped through the 1000-step sigma schedule) instead\n                          of set_timesteps(--n_steps); required for a fair few-step DMD test")
     return p.parse_args()
@@ -221,8 +227,16 @@ def main():
     for ckpt_path in args.checkpoints:
         step = int(os.path.basename(ckpt_path).split("_")[-1].split(".")[0])
         ckpt = torch.load(ckpt_path, map_location="cpu")
-        model.generator.model.load_state_dict(ckpt["lora_state_dict"], strict=False)
-        action_encoder.load_state_dict(ckpt["action_encoder_state_dict"])
+        if args.no_finetune:
+            # leave LoRA at its init (B is zero -> identity) and the action encoder unused;
+            # a_mean/a_std still come from the checkpoint so normalisation is unchanged
+            print("    !! BASELINE: no LoRA weights, no action conditioning", flush=True)
+        else:
+            model.generator.model.load_state_dict(ckpt["lora_state_dict"], strict=False)
+            action_encoder.load_state_dict(ckpt["action_encoder_state_dict"])
+        null_emb = ckpt.get("null_action_embedding")
+        if null_emb is not None:
+            null_emb = null_emb.to(device)
         a_mean = ckpt["action_mean"].to(device)
         a_std = ckpt["action_std"].to(device)
         print(f"\n########## checkpoint step {step} ##########", flush=True)
@@ -255,12 +269,18 @@ def main():
                 an = (a - a_mean) / a_std
                 an[:, 0, :] = 0.0
                 assert an.abs().max().item() < SANITY_MAX_SIGMA * 3, "action out of distribution"
+                if args.no_finetune:
+                    return None      # no conditioning path at all
                 return action_encoder(an.to(torch.bfloat16))
 
             noise = torch.randn_like(real_latent)   # SAME noise for all variants -> fair comparison
 
             # ---- MODE A: real action, compare against ground truth ----
-            gen_real = sample(real_latent, embed(None), noise)
+            if args.null_action:
+                nb = null_emb.view(1, 1, -1).expand(real_latent.shape[0], NUM_FRAMES, -1)
+                gen_real = sample(real_latent, nb.to(torch.bfloat16), noise)
+            else:
+                gen_real = sample(real_latent, embed(None), noise)
             f_gen = decode(gen_real)
             f_gt = decode(real_latent)
             n_ctx_px = 1 + 4 * (n_ctx - 1)          # latent 0 -> 1 px frame, then 4 each
@@ -273,8 +293,13 @@ def main():
                 fid_m.update(g.to(torch.uint8), real=False)
 
             # ---- MODE B: swapped actions, controllability ----
-            gen_r = sample(real_latent, embed((-DISP_MAX, 0.0)), noise)   # dim0<0 -> arm RIGHT
-            gen_l = sample(real_latent, embed((+DISP_MAX, 0.0)), noise)   # dim0>0 -> arm LEFT
+            if args.noise_floor:
+                # identical conditioning both times -> whatever divergence remains is sampler noise
+                gen_r = sample(real_latent, embed((-DISP_MAX, 0.0)), noise)
+                gen_l = sample(real_latent, embed((-DISP_MAX, 0.0)), noise)
+            else:
+                gen_r = sample(real_latent, embed((-DISP_MAX, 0.0)), noise)   # dim0<0 -> arm RIGHT
+                gen_l = sample(real_latent, embed((+DISP_MAX, 0.0)), noise)   # dim0>0 -> arm LEFT
             fr, fl = decode(gen_r), decode(gen_l)
             if psnr_sw:
                 for f_wrong in (fr, fl):
