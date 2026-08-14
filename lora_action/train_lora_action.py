@@ -55,6 +55,10 @@ def parse_args():
     p.add_argument("--max_steps", type=int, default=2500)
     p.add_argument("--lr_lora", type=float, default=1e-4)
     p.add_argument("--lr_action", type=float, default=3e-4)
+    p.add_argument("--p_selfpred", type=float, default=0.0,
+                    help="SCHEDULED SAMPLING (Danilo). With this probability per sample, the\n                          teacher-forcing CONTEXT is replaced by the model's OWN reconstruction\n                          of those frames instead of the ground truth, while the TARGET stays\n                          real. Teaches the model to predict the correct next frame even when its\n                          input is worse than a real frame -- the failure mode we measured\n                          (control collapses after one self-generated block).\n                          NOTE this is an approximation of true self-forcing: BAIR clips are 8\n                          latent frames = exactly 2 blocks, so there is no third block of ground\n                          truth to roll out into. We degrade the context in the model's own\n                          characteristic way instead of rolling forward.")
+    p.add_argument("--selfpred_timestep", type=int, default=500,
+                    help="noise level at which the context is corrupted before the model\n                          reconstructs it; higher = more degraded context")
     p.add_argument("--action_dropout_p", type=float, default=0.1)
     p.add_argument("--checkpoint_every", type=int, default=250)
     p.add_argument("--checkpoint_dir", default="/home/mls10/checkpoints/bair_lora")
@@ -233,6 +237,26 @@ def main():
             if drop_mask.any():
                 action_embed[drop_mask] = null_action_embedding.view(1, 1, -1)
 
+        # ---- scheduled sampling: swap the CONTEXT for the model's own version ----
+        context_latent = None
+        if args.p_selfpred > 0:
+            mask = torch.rand(args.batch_size, device=device) < args.p_selfpred
+            if mask.any():
+                with torch.no_grad():
+                    t_ctx = torch.full((args.batch_size, NUM_FRAMES),
+                                       float(args.selfpred_timestep),
+                                       device=device, dtype=torch.bfloat16)
+                    n_ctx_noise = torch.randn_like(clean_latent)
+                    noisy_ctx = model.scheduler.add_noise(
+                        clean_latent.flatten(0, 1), n_ctx_noise.flatten(0, 1),
+                        t_ctx.flatten(0, 1)).unflatten(0, (args.batch_size, NUM_FRAMES))
+                    _, x0_ctx = model.generator(
+                        noisy_image_or_video=noisy_ctx, conditional_dict=conditional_dict,
+                        timestep=t_ctx, clean_x=clean_latent, aug_t=None,
+                        viewmats=viewmats, Ks=Ks, action_embed=action_embed)
+                context_latent = clean_latent.clone()
+                context_latent[mask] = x0_ctx[mask].clamp(-6, 6).to(clean_latent.dtype)
+
         loss, log_dict = model.generator_loss(
             image_or_video_shape=[args.batch_size, NUM_FRAMES, 16, 8, 8],
             conditional_dict=conditional_dict,
@@ -242,6 +266,7 @@ def main():
             viewmats=viewmats,
             Ks=Ks,
             action_embed=action_embed,
+            context_latent=context_latent,
         )
         optimizer.zero_grad()
         loss.backward()

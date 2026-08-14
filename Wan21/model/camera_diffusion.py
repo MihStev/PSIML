@@ -40,6 +40,11 @@ class CameraCausalDiffusion(CausalDiffusion):
         viewmats: Optional[torch.Tensor] = None,
         Ks: Optional[torch.Tensor] = None,
         action_embed: Optional[torch.Tensor] = None,  # [B, F, dim] per-latent-frame action
+        context_latent: Optional[torch.Tensor] = None,  # teacher-forcing context; defaults to
+                                                        # clean_latent. Split out so scheduled
+                                                        # sampling can feed the model its OWN
+                                                        # imperfect frames as context while the
+                                                        # target stays the real one.
     ) -> Tuple[torch.Tensor, dict]:
         from algorithms.flow_matching import flow_matching_loss
 
@@ -73,12 +78,12 @@ class CameraCausalDiffusion(CausalDiffusion):
             )
             timestep_clean_aug = self.scheduler.timesteps[index_clean_aug].to(dtype=self.dtype, device=self.device)
             clean_latent_aug = self.scheduler.add_noise(
-                clean_latent.flatten(0, 1),
+                (clean_latent if context_latent is None else context_latent).flatten(0, 1),
                 noise.flatten(0, 1),
                 timestep_clean_aug.flatten(0, 1)
             ).unflatten(0, (batch_size, num_frame))
         else:
-            clean_latent_aug = clean_latent
+            clean_latent_aug = clean_latent if context_latent is None else context_latent
             timestep_clean_aug = None
 
         flow_pred, x0_pred = self.generator(

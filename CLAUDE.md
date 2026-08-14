@@ -1751,6 +1751,98 @@ sa vjerovatnoćom `p` uzeti kao ulaz **sopstvenu prethodnu predikciju** umjesto 
 mislio i zato što smo danas izmjerili da su za generisanje konteksta dovoljna **4 koraka**:
 ~6-7 s/korak umjesto 3.46, dakle 4000 koraka stane u jednu noć.
 
+## KRAJ DANA 4 (14.08, ~00:30) — kontrole, demo, SR, dimni test
+
+### KONTROLE — dvije, obje mijenjaju kako se brojevi prijavljuju
+
+**1. Prag šuma divergencije = 15.35** (ista akcija dvaput, 256 scena).
+Naša prijavljena divergencija je 41.83 -> **~37% je bio čisti šum samplera**, ne akcija.
+Uzrok: `torch.randn_like` na SVAKOM međukoraku odšumljavanja, pa dva poziva `sample()` nisu
+identična ni pri identičnom kondicioniranju. Signal je stvaran (divergencija se više nego
+udvostručuje iznad praga), ali broj 41.83 se NE smije prijaviti bez ovog konteksta.
+Provjera zdravlja: sa istom akcijom `dir_rel = 54.3%`, dakle slučajnost — kako i mora biti.
+
+**2. Null akcija = 13.27 dB.** Ljestvica je sada potpuna:
+
+| | PSNR | razmak |
+|---|---|---|
+| prava akcija | 18.56 | |
+| null akcija | 13.27 | <- **5.29 dB = čista vrijednost informacije o akciji** |
+| pogrešna akcija | 12.45 | <- 0.82 dB = kazna za obmanu |
+| bez fine-tuninga | 7.12 | <- 5.33 dB = šta je fine-tuning donio |
+
+**Delta-PSNR od 6.11 dB je bio precijenjen** — sadrži 0.82 dB kazne. Poštena mjera
+upravljivosti je **5.29 dB**.
+
+### BASELINE bez fine-tuninga (256 scena)
+PSNR **7.12**, SSIM 0.114, FID 229, delta-PSNR **-0.03**, dir_rel **51.5%** (slučajnost).
+Pretrenirani model na BAIR-u ne umije ništa i akciju fizički ne vidi. **Ništa od izmjerene
+kontrole nije bilo "već tu".**
+
+### GREŠKA: DVA RADNA DIREKTORIJUMA (bitno za svaku buduću izmjenu)
+
+```
+/home/mls10/minWM              main            <- ovdje uređujem
+/home/mls10/minWM-dawidzard    dawidzard/work  <- ODAVDE SE KOD ZAISTA UČITAVA
+```
+
+Sve skripte imaju `sys.path.insert(...minWM-dawidzard...)` + `os.chdir` tamo. Znači:
+**skripte** dolaze iz `minWM` (pokreću se odatle), **bibliotečki kod** (`Wan21/model/...`,
+`wan_utils/...`) iz `minWM-dawidzard`. Izmjena `camera_diffusion.py` u `minWM` NIJE imala
+efekta i dimni test je pukao sa `unexpected keyword argument 'context_latent'`.
+**Pravilo: izmjene u `Wan21/` i `shared/` moraju ići u OBA direktorijuma.**
+Ne dira nijedan raniji rezultat — sve ostalo je bilo unutar `lora_action/`.
+
+### SCHEDULED SAMPLING — dimni test PROŠAO, izmjeren korak
+
+20 koraka, `p_selfpred=0.5`, `selfpred_timestep=500`: loss 0.4965 -> 0.2759,
+val 0.3121, gap -0.070, bez greške.
+**Korak = 4.74 s** (procjenjivao sam 6.5 s). Nad našim 3.46 s to je **+37%**, jer je dodatni
+prolaz JEDAN forward bez gradijenta, ne puna petlja uzorkovanja.
+4000 koraka = **5.3 h**.
+
+### DEMO I SR
+
+- **Interaktivni demo**: `/home/mls10/logs/demo/index.html` (7.13 MB, sve ugrađeno).
+  Objavljen kao stranica sa linkom. Port-forward NIJE moguć: Jupyter je **PID 1** na 6006,
+  `jupyter-server-proxy` traži restart entrypointa. Zaobilazno: Jupyter -> Download.
+  Klik pušta SAMO generisani dio; u statusu `branch from the same context`, jer svaki potez
+  je **grana iz iste tačke**, NIJE nastavak. Free rollout je zasebno dugme i on se nastavlja.
+- **SR**: `lora_action/upscale_video.py` (pošten Lanczos) i `lora_action/real_sr_video.py`
+  (Real-ESRGAN preko `spandrel`, težine `/tmp/resrgan.pth`). Real-ESRGAN **izmišlja detalje**,
+  nije naš model, ne ulazi ni u jedan broj — mora biti tako označen gdje god se pokaže.
+  Izlazi u `/home/mls10/logs/upscaled/`.
+
+### PUN TEST SKUP — 2x2 potpuna (256 scena)
+
+| baza | @4 koraka | @24 koraka |
+|---|---|---|
+| obična | PSNR 18.81 / FID 16.80 / dir_rel 100% | PSNR 18.56 / FID 11.12 / 99.6% |
+| DMD | PSNR 18.46 / FID 16.80 / 100% | PSNR 18.17 / FID 10.95 / 99.6% |
+
+Broj koraka košta ~52% FID-a; baza ne košta ništa. **Na punom skupu dir_rel je 99.6%
+(255/256), ne 100%** — tako i prijaviti.
+
+### MC ROLLOUT: običan naspram DMD — Nedkova hipoteza NIJE potvrđena
+
+| dubina | običan | DMD |
+|---|---|---|
+| 1 | 0.789 (0.735-0.835) | 0.805 (0.752-0.849) |
+| 2 | 0.719 (0.661-0.770) | 0.695 (0.636-0.748) |
+| 3 | 0.742 (0.685-0.792) | 0.781 (0.727-0.828) |
+
+Intervali se preklapaju na svakoj dubini; FVD*/FID praktično identični. Mjereno u režimu gdje
+je razlika MOGLA da se pokaže. Moguće objašnjenje koje vrijedi reći: naš LoRA fine-tuning je
+bio teacher-forced, pa smo možda **odučili** destilovani model od otpornosti koju mu je
+self-forcing dao — što je tačno ono što noćni scheduled sampling provjerava.
+
+### GOAL SEARCH (10 scena sa najvećom stvarnom akcijom)
+Slaganje znaka **15/20** (x: 6/10, y: 9/10). Iznad slučajnosti, nije trijumf. Tri od četiri
+promašaja po x su na scenama gdje je stvarni dx ~0.001-0.005, dakle znak je besmislen.
+Ograničeno na |komponenta| > 0.01 ispada 12/14, ALI to je **naknadno filtriranje** i glavni
+broj ostaje 15/20. Izabrane akcije su sistematski VEĆE od stvarnih — pogađa smjer, pretjeruje
+u jačini.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
