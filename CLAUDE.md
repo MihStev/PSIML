@@ -1480,9 +1480,9 @@ Isti W&B projekat (`bair-action-lora`) namjerno — dva runa u istom grafiku.
   neuspjeh vidi odmah a ne ujutru.
 
 **Napomena za sutrašnju evaluaciju:** `evaluate.py` već ima `--base_checkpoint` i
-`--dmd_schedule`. `--dmd_schedule` reprodukuje iskrivljenu listu indeksa `[1000,750,500,250]`
-iz konfiguracije destilovanog modela — NE koristiti `set_timesteps(4)`, koji bi pogrešno dao
-`[1000,937,833,625]`.
+`--dmd_schedule`. `--dmd_schedule` reprodukuje raspored destilovanog modela.
+**NETAČNO je ono što je ovdje ranije pisalo — da `set_timesteps(4)` daje pogrešan raspored;
+vidi ISPRAVKU (14.08) niže, dva puta daju identičan rezultat.**
 
 ## DMD TRENING ZAVRŠEN (14.08, 05:42 lokalno) — bez ijedne greške
 
@@ -1523,7 +1523,25 @@ destilovani model na predviđanje **pravog toka**, tj. na ono od čega ga je des
 To pojačava hipotezu "dobićemo kontrolu, ali oštećenu prečicu". **Val loss NE MOŽE to
 detektovati** — mjeri koliko dobro model predviđa tok, ne koliko dobro ga preskače. Jedina
 mjera koja razdvaja "radi" od "poništili smo destilaciju" je **poređenje 4 naspram 24 koraka**
-u `evaluate.py` (sa `--dmd_schedule`, NE `set_timesteps(4)`).
+u `evaluate.py`.
+
+**ISPRAVKA (14.08, provjereno izvršavanjem):** raniji zapis na više mjesta je tvrdio da
+`--dmd_schedule` daje `[1000,750,500,250]` a `set_timesteps(4)` "pogrešno" `[1000,937,833,625]`,
+i da je razlika zamka. **To je netačno — dva puta daju IDENTIČAN raspored.** Provjereno
+pokretanjem oba:
+
+```
+set_timesteps(4):          [1000.0, 937.5, 833.3, 625.0]
+--dmd_schedule (indeksi):  [1000.0, 937.5, 833.3, 625.0]
+```
+
+Razlog: `denoising_step_list` iz konfiguracije su INDEKSI u 1000-koračni raspored, a `[1000,
+750, 500, 250]` su ravnomjerno raspoređeni indeksi — isto što `set_timesteps(4)` ionako
+proizvodi. Oba se onda iskrive kroz isti shift=5 (`s=0.75 → 5·0.75/(1+4·0.75) = 0.9375`).
+Brojevi `750/500/250` su bili indeksi, a `937/833/625` iskrivljeni timestep-ovi — ista stvar
+u dvije jedinice, a ja sam ih poredio kao da su suparnički rasporedi.
+`--dmd_schedule` je i dalje ispravno koristiti (eksplicitan je i ne zavisi od `--n_steps`),
+ali NIJE zaštita od greške koja ne postoji.
 
 Ne čitati ovu krivu po tački — skok na 1500-2000 pa povratak je tačno oblik koji izgleda kao
 trend a nije (peta lekcija iste vrste u ovom projektu).
