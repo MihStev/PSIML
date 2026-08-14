@@ -161,10 +161,14 @@ def main():
         model.scheduler.set_timesteps(args.n_steps)
         schedule = model.scheduler.timesteps.to(device)
 
-    psnr_m = ssim_m = fid_m = None
+    psnr_m = ssim_m = fid_m = psnr_sw = None
     try:
         from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
         psnr_m = PeakSignalNoiseRatio(data_range=255.0).to(device)
+        # separate accumulator for the WRONG-action generations -> delta-PSNR
+        # (Nedko's controllability metric: how much worse is the prediction when the
+        #  commanded action is not the episode's real one? 0 would mean 'ignores actions')
+        psnr_sw = PeakSignalNoiseRatio(data_range=255.0).to(device)
         ssim_m = StructuralSimilarityIndexMeasure(data_range=255.0).to(device)
     except Exception as e:
         print(f"!! PSNR/SSIM unavailable: {e}", flush=True)
@@ -227,6 +231,7 @@ def main():
         psnr_vals, ssim_vals, div_vals, ctx_div = [], [], [], []
         rel_correct = rel_total = abs_correct = abs_total = 0
         if psnr_m: psnr_m.reset()
+        if psnr_sw: psnr_sw.reset()
         if ssim_m: ssim_m.reset()
         if fid_m: fid_m.reset()
 
@@ -271,6 +276,11 @@ def main():
             gen_r = sample(real_latent, embed((-DISP_MAX, 0.0)), noise)   # dim0<0 -> arm RIGHT
             gen_l = sample(real_latent, embed((+DISP_MAX, 0.0)), noise)   # dim0>0 -> arm LEFT
             fr, fl = decode(gen_r), decode(gen_l)
+            if psnr_sw:
+                for f_wrong in (fr, fl):
+                    w = torch.tensor(f_wrong[:, n_ctx_px:].copy()).float() \
+                             .permute(0, 1, 4, 2, 3).flatten(0, 1).to(device)
+                    psnr_sw.update(w, t)      # t = ground truth, same slice as MODE A
             div_vals.append(float(np.abs(fr[:, n_ctx_px:].astype(np.float32) -
                                           fl[:, n_ctx_px:].astype(np.float32)).mean()))
             ctx_div.append(float(np.abs(fr[:, :n_ctx_px].astype(np.float32) -
@@ -295,6 +305,9 @@ def main():
             "step": step,
             "n_scenes": n_total,
             "psnr": psnr_vals[-1] if psnr_vals else None,
+            "psnr_wrong_action": float(psnr_sw.compute()) if psnr_sw else None,
+            "delta_psnr": (psnr_vals[-1] - float(psnr_sw.compute()))
+                          if (psnr_vals and psnr_sw) else None,
             "ssim": ssim_vals[-1] if ssim_vals else None,
             "fid": float(fid_m.compute()) if fid_m else None,
             "divergence_generated": float(np.mean(div_vals)),
@@ -306,6 +319,9 @@ def main():
         }
         all_results[step] = res
         print(f"  >>> step {step}: PSNR={res['psnr']} SSIM={res['ssim']} FID={res['fid']}", flush=True)
+        if res.get("delta_psnr") is not None:
+            print(f"  >>> delta-PSNR = {res['delta_psnr']:.3f} dB "
+                  f"(real action {res['psnr']:.3f} vs wrong action {res['psnr_wrong_action']:.3f})", flush=True)
         print(f"  >>> divergence gen={res['divergence_generated']:.2f} "
               f"ctx={res['divergence_context']:.2f} | dir_rel={res['direction_acc_relative']} "
               f"dir_abs={res['direction_acc_absolute']} (n={res['direction_n_scenes']})", flush=True)

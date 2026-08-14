@@ -1546,6 +1546,145 @@ ali NIJE zaštita od greške koja ne postoji.
 Ne čitati ovu krivu po tački — skok na 1500-2000 pa povratak je tačno oblik koji izgleda kao
 trend a nije (peta lekcija iste vrste u ovom projektu).
 
+## DMD: 4 vs 24 koraka — ODGOVARA na pitanje "da li smo pokvarili destilaciju" (14.08, 08:57-10:27, Dawidzardova sesija)
+
+`evaluate.py --base_checkpoint .../dmd/model.pt`, 5 checkpointa (`bair_lora_dmd/`) × 64 neviđene
+test scene, jednom sa `--dmd_schedule` (4 koraka, native raspored `[1000,937.5,833.3,625]`),
+jednom sa običnim 24-koračnim rasporedom. Sirovo: `eval_dmd_4step.json`, `eval_dmd_24step.json`.
+
+```
+korak   PSNR(4)  PSNR(24)  SSIM(4)  SSIM(24)  FID(4)  FID(24)  smj_aps(4)  smj_aps(24)
+ 1000    16.34     16.12    0.688    0.693     53.6     35.9      92.1%       83.6%
+ 2000    16.05     15.50    0.686    0.676     47.7     32.5      95.3%       87.5%
+ 4000    17.78     17.12    0.753    0.735     38.5     29.9      93.0%       85.9%
+ 6000    18.47     17.99    0.777    0.769     32.7     28.1      93.8%       86.7%
+ 8000    18.50     17.97    0.778    0.765     34.4     27.4      93.8%       87.5%
+```
+(`dir_rel` = 100% na oba rasporeda, svih 5 checkpointa — zasićen, ne razlikuje.)
+
+**Nalaz: 4 koraka (native DMD raspored) pobjeđuje 24 koraka na PSNR, SSIM I smjeru, konzistentno
+na svih 5 checkpointa. 24 koraka pobjeđuje samo na FID-u.** Suprotno intuiciji ("manje koraka =
+grublje") — i suprotno strahu od jučer.
+
+**Odgovara na otvoreno pitanje iz sinoć:** da je naš flow-matching gubitak "vratio" destilovani
+model ka sporom ponašanju i time uništio DMD-ovu prečicu, 4-koračno uzorkovanje bi bilo jasno
+LOŠIJE od 24-koračnog. Umjesto toga je bolje ili izjednačeno na 3 od 4 metrike. **DMD checkpoint
+je zadržao sposobnost brzog uzorkovanja i poslije LoRA+ActionEncoder fine-tuninga — destilacija
+NIJE pokvarena.**
+
+**Zašto FID ipak favorizuje 24 koraka (nije nužno u suprotnosti):** FID mjeri distribucionu
+"realnost" u Inception prostoru odlika, ne piksel-po-piksel tačnost prema ground truth-u kao
+PSNR/SSIM — sporiji raspored može dati glađe/uobičajenije slike u tom prostoru čak i kad je manje
+tačan prema stvarnom nastavku scene. Uz već ustanovljenu ogradu da je naš FID pri ovoj veličini
+uzorka samo relativna mjera (vidi ranije sekcije), ne tretirati ovu jednu metriku kao presudnu
+protiv preostale tri.
+
+**Vrijeme (`seconds` u JSON-u) NIJE čisto mjerenje** — GPU je bio dijeljen sa drugim poslovima u
+tom prozoru, pa brojevi ne čitaju se kao "4 koraka = Nx brže". Stvarna brzinska prednost DMD-a je
+već potvrđena ranije (quickstart demo, 1.22s latencija po chunk-u) — poenta ovog testa je samo da
+tačnost NIJE žrtvovana za tu brzinu.
+
+## DAN 4 (14.08) — DMD EVALUIRAN, NEGATIVAN REZULTAT, PA SUMNJA U NJEGA
+
+### 2x2 tabela: baza x broj koraka (finalni checkpoint, FID, 64 neviđene scene)
+
+| baza | @4 koraka | @24 koraka |
+|---|---|---|
+| obična (`ar_diffusion_tf`) | 34.10 | **27.2** |
+| destilovana (`dmd`) | 34.37 | 27.41 |
+
+- razlika između BAZA: 0.2-0.8% -> ispod šuma
+- razlika između BROJA KORAKA: ~25%, ista na obje baze
+- relativna kontrola: **100% u sve četiri ćelije**, `ctx=0.00` svuda
+
+Puni brojevi po checkpointima u `logs/eval_dmd_4step.json`, `eval_dmd_24step.json`,
+`eval_control_tf_4step.json`.
+
+### PROVJERA TEŽINA (jer je rezultat bio sumnjiv — korisnik je tražio)
+
+885 tenzora u oba bazna checkpointa, **0 IDENTIČNIH**. Medijana relativne razlike
+||A-B||/||A|| = **0.63%**, prosjek 5.6%, max 112%; 63/885 tenzora preko 10%.
+Dakle JESMO testirali stvarno destilovan model — ali je destilacija **manja perturbacija
+nego ono što naš LoRA fine-tuning ionako radi** (18.9M parametara). Otud spajanje val krivih
+za manje od 500 koraka.
+
+### ⚠ ZAKLJUČAK JE PRERANO IZVEDEN — MJERILI SMO U POGREŠNOM REŽIMU
+
+`model/dmd.py` uvozi i koristi `SelfForcingTrainingPipeline`. Znači **destilovani checkpoint
+je treniran self-forcingom — model je tokom treninga jeo SOPSTVENI izlaz.** To je lijek za
+izloženost (exposure bias).
+
+A mi smo ga mjerili **skoro isključivo u teacher-forced režimu, jedan blok, pravi kontekst** —
+jedini režim u kojem self-forcing trening NE MOŽE pokazati prednost.
+
+Mentor (Nedko) je nezavisno rekao da bi rollouti destilovanog modela trebali biti BOLJI zbog
+razlike u kauzalnosti/temporalnosti treninga. **Ima mehanizam iza sebe i vjerovatno je u pravu.**
+Zato je pokrenuto MC rollout poređenje oba modela (256 pokušaja, dubine 1-3, isti seed).
+**Ne prijavljivati "destilacija ne doprinosi ničemu" dok to ne prođe.**
+
+### PRELET PO BROJU KORAKA (finalni model, 16 scena — FID uporediv SAMO unutar preleta)
+
+| koraka | PSNR | SSIM | FID |
+|---|---|---|---|
+| 1 | 19.01 | 0.760 | 86.47 |
+| 2 | 19.67 | 0.794 | 65.67 |
+| 4 | 19.33 | 0.789 | 60.13 |
+| 8 | 19.08 | 0.786 | 55.14 |
+| 12 | 19.68 | 0.804 | 53.98 |
+
+Nema praga ni provalije: FID pada **glatko sa opadajućim prinosom**. Veliki skok je 1->2
+(86->66), dalje sve manje. Kriva je zasićena već oko 8-12 koraka. PSNR je RAVAN kroz cijeli
+opseg (19.0-19.7, bez trenda) — još jedna potvrda da PSNR ovdje nagrađuje zamućenje umjesto
+kvaliteta.
+
+### ISPRAVLJENA GREŠKA: `set_timesteps(4)` == `--dmd_schedule`
+
+Vidi zasebnu sekciju "ISPRAVKA (14.08)". Ranije zapisano kao zamka — nije.
+
+### ISPRAVLJENO IMENOVANJE FOLDERA (`tf` je značilo DVIJE stvari)
+
+Stara imena `square_rollout_tf4/tf24` su značila **bazni checkpoint `ar_diffusion_tf`**, a NE
+teacher-forced generisanje. Ista skraćenica za fazu treninga i za način generisanja ->
+garantovana zabuna na slajdu. Preimenovano u `/home/mls10/logs/`:
+
+| folder | način | baza | koraka |
+|---|---|---|---|
+| `rollout_free__base-obican__4koraka` | slobodan rollout | obična | 4 |
+| `rollout_free__base-obican__24koraka` | slobodan rollout | obična | 24 |
+| `rollout_free__base-dmd__4koraka` | slobodan rollout | dmd | 4 |
+| `teacherforced__base-obican__4koraka` | teacher-forced, jedan prolaz | obična | 4 |
+| `square_rollout_first4` / `square_oneshot_first4` | prvi (nedotreniran) lora model | obična | 4 |
+
+### KVADRAT — šta zapravo radi (ispravka)
+
+`PROGRAMS["square"]` ima 7 unosa za 8 latent frejmova, a **0-3 su kontekst**. Akcije padaju na
+frejmove 1-7, pa se STVARNO generišu samo `down, left, left, up` (frejmovi 4-7) — prva
+stranica kvadrata je na kontekst frejmovima koji se prepisuju PRAVIM latentima. Dakle to je
+**tri četvrtine kvadrata**, ne pun kvadrat. NE tvrditi "model iscrtava pun kvadrat u jednom
+pozivu".
+
+Slobodni rollout kvadrata se raspada od drugog bloka — **i na 4 i na 24 koraka podjednako**,
+pa broj koraka NIJE uzrok; uzrok je izloženost.
+
+### GREŠKA KOJU SAM NAPRAVIO: zaglavljeni čekači
+
+`steps_runner.sh` je čekao na `pgrep -f "...|steps_runner.sh|..."` — dakle **na samog sebe**.
+Kartica je stajala prazna 20 minuta. Pravilo: obrazac za čekanje NIKAD ne smije da uključuje
+ime skripte koja čeka.
+
+### TEST SKUP
+
+**256 neviđenih scena** (trening: 216 325 zapisa). Sve dosadašnje evaluacije su na **64**
+(četvrtina). Pokrenuta puna evaluacija na svih 256 za finalne checkpointe oba modela.
+
+### DELTA-PSNR (Nedkov prijedlog, implementiran u `evaluate.py`)
+
+PSNR kad je kondicioniranje na **pravu** akciju epizode, minus PSNR kad je na **pogrešnu**
+(prosjek forsiranih +D/-D). Ako model ignoriše akciju -> 0. Popravlja slabost divergencije,
+koja mjeri samo "različito", ne "tačno različito" (ista zamka koju smo već uhvatili na
+rollout-u: divergencija raste dok kontrola pada). Polja u JSON-u: `psnr_wrong_action`,
+`delta_psnr`.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

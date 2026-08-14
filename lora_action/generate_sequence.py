@@ -64,6 +64,10 @@ def parse_args():
     p.add_argument("--context_idx", type=int, default=3)
     p.add_argument("--program", default="all")
     p.add_argument("--n_steps", type=int, default=24)
+    p.add_argument("--base_checkpoint",
+                    default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt")
+    p.add_argument("--dmd_schedule", action="store_true",
+                    help="use the distilled model's 4-step schedule (same code path as evaluate.py)")
     p.add_argument("--real_dims23", action="store_true",
                     help="use the episode's real dims 2/3 instead of dataset-mean constants;\n                          the eval used real values, the first demo run did not -- this isolates\n                          whether freezing them weakened the conditioning")
     p.add_argument("--out_dir", default="/home/mls10/logs/gen_sequences")
@@ -97,7 +101,7 @@ def main():
     from model import CameraCausalDiffusion  # noqa: E402
     print("=== Loading model ===", flush=True)
     model = CameraCausalDiffusion(config, device=device)
-    base = torch.load("/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt", map_location="cpu")
+    base = torch.load(args.base_checkpoint, map_location="cpu")
     gen_sd = base.get("generator_ema", base.get("generator"))
     try:
         model.generator.load_state_dict(gen_sd)
@@ -134,8 +138,18 @@ def main():
     vm = torch.eye(4, device=device, dtype=torch.bfloat16).view(1, 1, 4, 4).repeat(1, NUM_FRAMES, 1, 1)
     ks = torch.tensor([[0.5, 0, 0.5], [0, 0.5, 0.5], [0, 0, 1]], device=device, dtype=torch.bfloat16) \
         .view(1, 1, 3, 3).repeat(1, NUM_FRAMES, 1, 1)
-    model.scheduler.set_timesteps(args.n_steps)
-    schedule = model.scheduler.timesteps.to(device)
+    if args.dmd_schedule:
+        # identical to evaluate.py: denoising_step_list are INDICES into the 1000-step
+        # (shifted) schedule -> [1000.0, 937.5, 833.3, 625.0]
+        model.scheduler.set_timesteps(1000)
+        full = torch.cat((model.scheduler.timesteps.cpu(), torch.tensor([0.0])))
+        schedule = full[[1000 - i for i in (1000, 750, 500, 250)]].to(device)
+        model.scheduler.sigmas = (schedule.cpu() / model.scheduler.num_train_timesteps)
+        model.scheduler.timesteps = schedule.cpu()
+        print(f"=== DMD 4-step schedule: {[round(float(t),1) for t in schedule]} ===", flush=True)
+    else:
+        model.scheduler.set_timesteps(args.n_steps)
+        schedule = model.scheduler.timesteps.to(device)
     noise = torch.randn_like(real_latent)  # SAME noise for every program -> differences are the action
 
     def decode(lat):

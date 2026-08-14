@@ -75,6 +75,9 @@ def parse_args():
     p.add_argument("--n_steps", type=int, default=24)
     p.add_argument("--out_json", default="/home/mls10/logs/rollout_metrics_mc.json")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--base_checkpoint",
+                    default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt")
+    p.add_argument("--dmd_schedule", action="store_true")
     return p.parse_args()
 
 
@@ -125,7 +128,7 @@ def main():
     from model import CameraCausalDiffusion  # noqa: E402
     print("=== loading model ===", flush=True)
     model = CameraCausalDiffusion(config, device=device)
-    base = torch.load("/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt", map_location="cpu")
+    base = torch.load(args.base_checkpoint, map_location="cpu")
     gen_sd = base.get("generator_ema", base.get("generator"))
     try:
         model.generator.load_state_dict(gen_sd)
@@ -184,7 +187,15 @@ def main():
     n_ctx = config.num_frame_per_block
     n_total = lat_shape[0]
     print(f"=== test LMDB has {n_total} scenes; requested {args.n_trials} trials ===", flush=True)
-    model.scheduler.set_timesteps(args.n_steps)
+    if args.dmd_schedule:
+        model.scheduler.set_timesteps(1000)
+        _full = torch.cat((model.scheduler.timesteps.cpu(), torch.tensor([0.0])))
+        _sch = _full[[1000 - i for i in (1000, 750, 500, 250)]]
+        model.scheduler.sigmas = (_sch / model.scheduler.num_train_timesteps)
+        model.scheduler.timesteps = _sch
+        print(f"=== DMD 4-step schedule: {[round(float(t),1) for t in _sch]} ===", flush=True)
+    else:
+        model.scheduler.set_timesteps(args.n_steps)
     schedule = model.scheduler.timesteps.to(device)
 
     def decode(lat):
