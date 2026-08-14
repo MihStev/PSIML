@@ -1685,6 +1685,72 @@ koja mjeri samo "različito", ne "tačno različito" (ista zamka koju smo već u
 rollout-u: divergencija raste dok kontrola pada). Polja u JSON-u: `psnr_wrong_action`,
 `delta_psnr`.
 
+## MC ROLLOUT — šta je to (definicija, da se ne miješa sa ostalim mjerenjima)
+
+**Monte Carlo free rollout** (`lora_action/rollout_metrics_mc.py`). Razlika prema svemu ostalom:
+
+| mjerenje | kontekst | koliko blokova | akcija |
+|---|---|---|---|
+| `evaluate.py` (glavne tabele) | **PRAVI** frejmovi (teacher forcing) | **1** | prava, pa zamijenjena |
+| `rollout.py` (demo klipovi) | sopstveni izlaz poslije 1. bloka | do 6 | fiksna, ručno izabrana |
+| **`rollout_metrics_mc.py`** | **sopstveni izlaz** | 1-3 (dubina) | **nasumična, NEZAVISNA po sceni i po bloku** |
+
+"Monte Carlo" = 256 nezavisnih pokušaja, svaki sa svojom nasumično izvučenom akcijom po bloku,
+pa se dobija **empirijska raspodjela sa intervalima povjerenja**, a ne jedan broj iz jedne
+ručno izabrane komande. To uklanja konfaund "možda smo izabrali laku komandu".
+
+Zašto je BAŠ ovo mjerenje ključno za DMD pitanje: destilovani checkpoint je treniran
+**self-forcingom** (`model/dmd.py` koristi `SelfForcingTrainingPipeline`), pa mu se prednost
+može pokazati SAMO tamo gdje model jede sopstveni izlaz — dakle ovdje, a ne u teacher-forced
+tabelama.
+
+## GREŠKE 14.08 POPODNE (tri, sve moje)
+
+1. **Zaglavljeni čekači** — `steps_runner.sh` je čekao `pgrep -f "...steps_runner.sh..."`, tj.
+   sam sebe. Kartica prazna 20 min. Pravilo: obrazac za čekanje NIKAD ne smije sadržati ime
+   skripte koja čeka.
+2. **Čekanje na proces koji još nije startovan** — `full_eval.sh` je čekao da
+   `rollout_metrics_mc.py` NESTANE, a taj još nije bio pokrenut, pa je uslov odmah bio
+   ispunjen -> tri posla na kartici umjesto dva. Ispravka: čekati **MARKER u logu**
+   (`grep -q "..."`), jer odsustvo procesa ne razlikuje "gotov" od "još nije počeo".
+3. **OOM na dva MC rollouta paralelno** — `rollout_metrics_mc.py` troši **21.7 GB**, ne 16.7
+   kao `evaluate.py`; dva takva su 43 GB na kartici od 40. Razmak od 7 min ne pomaže jer oba
+   dostignu vrh. Pretpostavio sam potrošnju umjesto da je izmjerim.
+   Uz to sam nepotrebno ponovo izmjerio OBIČAN model — rezultat je bit-identičan Mihajlovom
+   od jutros (0.789/0.719/0.742, PSNR 17.26, SSIM 0.7734), jer isti seed i isti checkpoint.
+   Trebalo je pustiti samo DMD.
+
+## GOAL-CONDITIONED ACTION SEARCH (`lora_action/goal_action_search.py`) — Danilova ideja
+
+Dati kontekst i **ciljni** frejm, uzorkovati mrežu kandidat-akcija (6x6 = 36 preko [-D,D]^2),
+predvidjeti blok za svaku u **jednom batchovanom prolazu sa ISTIM šumom**, i izabrati onu čija
+je zamišljena budućnost najbliža cilju (L1 ili PSNR).
+
+**Zašto je pošten test, a ne trik:** ciljni frejm je epizodina SOPSTVENA snimljena budućnost,
+pa je epizodina prava akcija **ground truth odgovor**. Skripta ispisuje izabranu akciju, pravu
+akciju i **slaganje znakova** — dakle provjerljivo, ne "slika izgleda dobro".
+
+Izlaz: panel `GOAL | BEST imagined | WORST imagined | površ ocjene preko (dx,dy)` plus JSON sa
+rangiranjem. Ako je površ ravna, akcija ne utiče — i to bi se vidjelo.
+
+Ovo je forward model čitan unatrag: ista mreža koja odgovara "šta se desi ako uradim X"
+koristi se za "koje X me vodi tamo" (Danilo: forward vs inverse dynamics, dva pogleda na
+isti model).
+
+## DANILOV OKVIR ZA PREZENTACIJU (14.08) + ispravka o self-forcingu
+
+Struktura: 1) motivacija (world modeli - robot zamišlja posljedice akcija), 2) ciljevi,
+3) metod (model, ulazi/izlazi, dataset, kako su građeni action embeddingi, kako se
+kondicionira), 4) rezultati - **voditi sa 100% kontrole**, pa vjernost, **prerenderovani
+demoi**, 5) demo videi + ograničenja na kraju. Prioritet: MVP prezentacija.
+
+**ISPRAVKA MOJE RANIJE TVRDNJE:** rekao sam da je self-forcing prekasno i prerizično jer je u
+repou spojen sa DMD distilacijom (tri transformera). **Danilova formulacija zaobilazi repo:**
+sa vjerovatnoćom `p` uzeti kao ulaz **sopstvenu prethodnu predikciju** umjesto pravog frejma
+(scheduled sampling), u NAŠOJ petlji, jedan transformer, ~10 linija. Jeftinije nego što sam
+mislio i zato što smo danas izmjerili da su za generisanje konteksta dovoljna **4 koraka**:
+~6-7 s/korak umjesto 3.46, dakle 4000 koraka stane u jednu noć.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
