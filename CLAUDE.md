@@ -1484,6 +1484,50 @@ Isti W&B projekat (`bair-action-lora`) namjerno — dva runa u istom grafiku.
 iz konfiguracije destilovanog modela — NE koristiti `set_timesteps(4)`, koji bi pogrešno dao
 `[1000,937,833,625]`.
 
+## DMD TRENING ZAVRŠEN (14.08, 05:42 lokalno) — bez ijedne greške
+
+8000 koraka za **7h 43min** (21:59:40 → 05:42), 3.46 s/korak, 16 checkpointa u
+`/home/mls10/checkpoints/bair_lora_dmd/` (1.8 GB — isto kao `bair_lora_big`, koji je
+netaknut). GPU oslobođen (4 MiB). Nula grešaka/NaN/OOM u logu.
+
+**Val loss, DMD naspram teacher-forcing runa, svih 16 tačaka:**
+
+| korak | DMD | stari | razlika |
+|---|---|---|---|
+| 500 | 0.1478 | 0.1483 | -0.34% |
+| 1000 | 0.1199 | 0.1194 | +0.42% |
+| 1500 | 0.1187 | 0.1171 | +1.37% |
+| 2000 | 0.1207 | 0.1195 | +1.00% |
+| 2500 | 0.1176 | 0.1176 | +0.00% |
+| 3000 | 0.1086 | 0.1079 | +0.65% |
+| 3500 | 0.1142 | 0.1135 | +0.62% |
+| 4000 | 0.1108 | 0.1105 | +0.27% |
+| 4500 | 0.1041 | 0.1033 | +0.77% |
+| 5000 | 0.1078 | 0.1075 | +0.28% |
+| 5500 | 0.1078 | 0.1076 | +0.19% |
+| 6000 | 0.1074 | 0.1077 | -0.28% |
+| 6500 | 0.1007 | 0.1008 | -0.10% |
+| 7000 | 0.1091 | 0.1095 | -0.37% |
+| 7500 | 0.1016 | 0.1024 | -0.78% |
+| 8000 | 0.1037 | 0.1030 | +0.68% |
+
+**Sve 16 razlika unutar ±1.4%, medijana ~+0.3%** — manje nego što bi dala promjena seeda.
+Krive su nerazlučive. Zanimljivo: druga polovina treninga ima DMD blago ISPRED (6000-7500
+sve negativno), ali to je isto unutar šuma i NE treba tumačiti kao "DMD baza je bolja".
+
+**Korak 0 se JESTE razlikovao: 0.5737 (DMD) naspram 0.5191 (TF)** — to je dokaz da je drugi
+bazni checkpoint zaista učitan. Razlika se potrošila za manje od 500 koraka.
+
+**KLJUČNO TUMAČENJE — i zamka za sutrašnju evaluaciju:** poklapanje znači da je LoRA vratila
+destilovani model na predviđanje **pravog toka**, tj. na ono od čega ga je destilacija odučila.
+To pojačava hipotezu "dobićemo kontrolu, ali oštećenu prečicu". **Val loss NE MOŽE to
+detektovati** — mjeri koliko dobro model predviđa tok, ne koliko dobro ga preskače. Jedina
+mjera koja razdvaja "radi" od "poništili smo destilaciju" je **poređenje 4 naspram 24 koraka**
+u `evaluate.py` (sa `--dmd_schedule`, NE `set_timesteps(4)`).
+
+Ne čitati ovu krivu po tački — skok na 1500-2000 pa povratak je tačno oblik koji izgleda kao
+trend a nije (peta lekcija iste vrste u ovom projektu).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
