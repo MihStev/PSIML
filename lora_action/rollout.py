@@ -71,6 +71,8 @@ def parse_args():
                     default="/tmp/local_ckpts/Wan21/Action2V/ar_diffusion_tf/model.pt")
     p.add_argument("--dmd_schedule", action="store_true",
                     help="use the distilled model's 4-step schedule (same code path as evaluate.py)")
+    p.add_argument("--seed", type=int, default=None,
+                    help="fix the noise so two checkpoints can be compared frame for frame")
     p.add_argument("--out_dir", default="/home/mls10/logs/rollout")
     return p.parse_args()
 
@@ -89,6 +91,9 @@ def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     device = torch.device("cuda")
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
     torch.set_grad_enabled(False)
     for a in args.actions:
         assert a in DIRS, f"unknown action {a}; choose from {list(DIRS)}"

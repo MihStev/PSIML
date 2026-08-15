@@ -210,13 +210,13 @@ def main():
     H, W = goal.shape[:2]
     surf = scores.reshape(gs, gs)
     surf_n = (surf - surf.min()) / (surf.max() - surf.min() + 1e-9)
-    heat = np.stack([1 - surf_n, 1 - surf_n, np.ones_like(surf_n)], -1)   # blue = better
+    heat = np.stack([1 - surf_n, 1 - surf_n, np.ones_like(surf_n)], -1)   # WHITE = better, BLUE = worse
     heat_img = np.array(Image.fromarray((heat * 255).astype(np.uint8)).resize((W, H), Image.NEAREST))
 
     panels = [("GOAL (real future)", goal.astype(np.uint8)),
               ("BEST imagined", preds[best, -1]),
               ("WORST imagined", preds[worst, -1]),
-              (f"score over dx,dy ({gs}x{gs})", heat_img)]
+              (f"score over dx,dy ({gs}x{gs}) -- WHITE is better", heat_img)]
     canvas = Image.new("RGB", (W * len(panels), H), (255, 255, 255))
     for i, (_, img) in enumerate(panels):
         canvas.paste(Image.fromarray(img), (i * W, 0))
