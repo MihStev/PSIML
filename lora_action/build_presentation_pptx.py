@@ -214,15 +214,19 @@ for i, (g, c) in enumerate([("action control", PINK),
     chip(s, Inches(0.8), Inches(4.85) + i * Inches(0.87), Inches(5.3),
          Inches(0.75), g, c, 30)
 
-# DARPA Robotics Challenge Finals 2015: an Atlas (WARNER, WPI-CMU) mid-fall on
-# the rubble task. U.S. Navy photo via Wikimedia Commons, CC BY 2.0.
-img_w, img_h = Inches(4.9), Inches(4.15)
-ix, iy = Inches(7.15), Inches(2.95)
+# Click-to-play fail clip (Unitree H1 flailing on its crane, 12.5 s, muted;
+# cut at 1:54 from youtube OqsqzPCLvE4 per user request -- talk use only, the
+# compilation is not ours to redistribute). The DRC Atlas fall photo
+# (robot_fall.jpg, CC BY 2.0) stays on disk as a swap-in alternative.
+img_w, img_h = Inches(4.9), Inches(2.76)   # clip is 640x360, keep 16:9
+ix, iy = Inches(7.15), Inches(3.55)
 rect(s, ix - Inches(0.08), iy - Inches(0.08), img_w + Inches(0.16),
      img_h + Inches(0.16), fill_color=PANEL, line_color=CORAL, radius=True,
      line_w=2.25)
-s.shapes.add_picture("/home/mls10/presentation/robot_fall.jpg", ix, iy,
-                     img_w, img_h)
+s.shapes.add_movie("/home/mls10/presentation/robot_fail_clip.mp4", ix, iy,
+                   img_w, img_h,
+                   poster_frame_image="/home/mls10/presentation/robot_fail_poster.png",
+                   mime_type="video/mp4")
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
