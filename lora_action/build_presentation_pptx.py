@@ -1,48 +1,55 @@
 #!/usr/bin/env python
-"""Pitch deck builder (python-pptx) -- title + 10 content slides, per PREZENTACIJA_BRIEF.md.
+"""Pitch deck builder (python-pptx) -- title + 9 content slides, per PREZENTACIJA_BRIEF.md.
 
-Structure follows the brief (10 min + 5 Q&A): motivation+goals, method (2 slides:
-the two questions the audience will ask), control result (99.6% -- NOT the 100%
-subset number, per the brief's mandatory caveat), the controllability ladder,
-the interactive widget, inverse dynamics, limitations (the
-corrected story: control survives rollout, localization drifts), and a closing
-slide with the four measured contributions.
+Visual redesign round (user request, day 5):
+  - Times New Roman everywhere, no text below 30 pt (small captions reformulated
+    or cut -- the speakers narrate them), footers removed
+  - per-slide two-stop gradient backgrounds, multi-color accents, gradient bars
+  - title slide without mentors
+  - slide 3 is a full-slide implementation-architecture diagram (no headline):
+    video lane and action lane converge into the DiT, output decoded below
+  - slide 4 reduced to the two design decisions, one card each
+  - slide 6 ladder rebuilt label-above-bar (nothing side-by-side can overlap),
+    one color per rung
 
-Interactive widget: PowerPoint cannot embed HTML, so demo1's frames are extracted
-from its base64 DATA blob (extract_demo1_widget.py --scene 204) and rebuilt as
-click-to-play movie tiles, with a relative hyperlink to the full panel shipped
-next to the .pptx (arm_control_panel.html -- restyled to this deck's template).
+Content still follows the brief: 99.6% (not the 100% subset), the ladder,
+the click-to-play widget (demo1, scene 204), inverse dynamics 15/20, the
+corrected rollout story (control survives, localization drifts), four
+contributions. Numbers all from the 256-scene eval unless said otherwise.
 
 Prerequisites:
   - widget tiles/posters in /home/mls10/presentation/widget (extract_demo1_widget.py)
   - goal-search panel: logs/goal_search/goal_search_idx108.png
   - cp logs/demo/index.html /home/mls10/presentation/arm_control_panel.html
 
-Gotchas that cost time: python-pptx 1.0.2 has no `pptx.enum.line` (dash style lives
-in `pptx.enum.dml.MSO_LINE_DASH_STYLE`), and a textbox overlaid on a hyperlinked
-shape intercepts the click -- the link text must live in the shape's own text_frame.
+Gotchas: python-pptx 1.0.2 dash style lives in pptx.enum.dml.MSO_LINE_DASH_STYLE;
+hyperlink text must live in the linked shape's own text_frame; connector
+arrowheads need raw oxml (a:tailEnd).
 """
+import copy
 import os
+from lxml import etree
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.enum.dml import MSO_LINE_DASH_STYLE as MSO_LINE
+from pptx.oxml.ns import qn
 
 # ---------------------------------------------------------------- palette --
-BG        = RGBColor(0x0A, 0x0C, 0x0F)
-BG_RAISED = RGBColor(0x14, 0x18, 0x1E)
-BG_INSET  = RGBColor(0x1A, 0x1E, 0x25)
-INK       = RGBColor(0xF2, 0xF4, 0xF6)
-INK_DIM   = RGBColor(0xA6, 0xAF, 0xBA)
-INK_FAINT = RGBColor(0x6E, 0x77, 0x82)
-ACCENT    = RGBColor(0x38, 0xD6, 0xC4)
-WARN      = RGBColor(0xFF, 0x7A, 0x52)
-LINE      = RGBColor(0x2C, 0x31, 0x39)
+INK    = RGBColor(0xF6, 0xF7, 0xFB)
+DIM    = RGBColor(0xCB, 0xD3, 0xE4)
+PANEL  = RGBColor(0x10, 0x14, 0x26)
+TEAL   = RGBColor(0x3E, 0xE6, 0xD0)
+PINK   = RGBColor(0xFF, 0x7A, 0xB8)
+AMBER  = RGBColor(0xFF, 0xD1, 0x66)
+CYAN   = RGBColor(0x6F, 0xD3, 0xFF)
+VIOLET = RGBColor(0xB7, 0x9B, 0xFF)
+CORAL  = RGBColor(0xFF, 0x8F, 0x6B)
+SLATE  = RGBColor(0x9A, 0xA6, 0xBE)
 
-SANS = "Calibri"
-MONO = "Consolas"
+FONT = "Times New Roman"
 
 WIDGET = "/home/mls10/presentation/widget"
 GOAL_PANEL = "/home/mls10/logs/goal_search/goal_search_idx108.png"
@@ -50,7 +57,6 @@ OUT_PATH = "/home/mls10/presentation/BAIR_LoRA_Presentation.pptx"
 
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
-TOTAL = 10
 
 
 # ------------------------------------------------------------- utilities --
@@ -59,16 +65,25 @@ def set_letter_spacing(run, pt_hundredths):
     rPr.set("spc", str(pt_hundredths))
 
 
-def new_slide(prs):
+def grad(fill, c1, c2, angle=120.0):
+    fill.gradient()
+    stops = fill.gradient_stops
+    stops[0].color.rgb = c1
+    stops[0].position = 0.0
+    stops[1].color.rgb = c2
+    stops[1].position = 1.0
+    fill.gradient_angle = angle
+
+
+def new_slide(prs, c1, c2, angle=125.0):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = BG
+    grad(slide.background.fill, c1, c2, angle)
     return slide
 
 
 def add_text(slide, left, top, width, height, text, size, color,
-             bold=False, italic=False, font=SANS, align=PP_ALIGN.LEFT,
-             anchor=MSO_ANCHOR.TOP, line_spacing=1.12, letter_spacing=None,
+             bold=False, italic=False, align=PP_ALIGN.LEFT,
+             anchor=MSO_ANCHOR.TOP, line_spacing=1.08, letter_spacing=None,
              upper=False):
     tb = slide.shapes.add_textbox(left, top, width, height)
     tf = tb.text_frame
@@ -84,33 +99,29 @@ def add_text(slide, left, top, width, height, text, size, color,
         run.font.size = Pt(size)
         run.font.bold = bold
         run.font.italic = italic
-        run.font.name = font
+        run.font.name = FONT
         run.font.color.rgb = color
         if letter_spacing is not None:
             set_letter_spacing(run, letter_spacing)
     return tb
 
 
-def eyebrow(slide, left, top, text, align=PP_ALIGN.LEFT, width=Inches(11)):
-    add_text(slide, left, top, width, Inches(0.4), text, 14, ACCENT,
-             bold=True, font=MONO, align=align, letter_spacing=150, upper=True)
+def eyebrow(slide, left, top, text, color, align=PP_ALIGN.LEFT, width=Inches(12)):
+    add_text(slide, left, top, width, Inches(0.55), text, 30, color,
+             bold=True, align=align, letter_spacing=120, upper=True)
 
 
-def footer(slide, index):
-    add_text(slide, Inches(0.9), Inches(7.08), Inches(7), Inches(0.32),
-             "BAIR ROBOT PUSHING  ·  WAN2.1-T2V-1.3B  ·  LORA RANK 16",
-             10.5, INK_FAINT, font=MONO, letter_spacing=60)
-    add_text(slide, Inches(11.2), Inches(7.08), Inches(1.3), Inches(0.32),
-             f"{index+1:02d} / {TOTAL:02d}", 10.5, INK_FAINT, font=MONO,
-             align=PP_ALIGN.RIGHT)
-
-
-def rect(slide, left, top, width, height, fill_color, line_color=None,
-         radius=False, line_w=1.25):
+def rect(slide, left, top, width, height, fill_color=None, line_color=None,
+         radius=False, line_w=1.5, grad_pair=None, grad_angle=90.0):
     shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
     shp = slide.shapes.add_shape(shape_type, left, top, width, height)
-    shp.fill.solid()
-    shp.fill.fore_color.rgb = fill_color
+    if grad_pair is not None:
+        grad(shp.fill, grad_pair[0], grad_pair[1], grad_angle)
+    elif fill_color is not None:
+        shp.fill.solid()
+        shp.fill.fore_color.rgb = fill_color
+    else:
+        shp.fill.background()
     if line_color is None:
         shp.line.fill.background()
     else:
@@ -125,55 +136,45 @@ def rect(slide, left, top, width, height, fill_color, line_color=None,
     return shp
 
 
-def flow_box(slide, left, top, width, height, title, sub=None, accent=False,
-             title_size=16, sub_size=12):
-    rect(slide, left, top, width, height, BG_RAISED,
-         line_color=ACCENT if accent else LINE, radius=True,
-         line_w=1.75 if accent else 1.25)
-    if sub:
-        add_text(slide, left + Inches(0.08), top + Inches(0.16),
-                 width - Inches(0.16), Inches(0.5), title, title_size, INK,
-                 bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
-        add_text(slide, left + Inches(0.08), top + height - Inches(0.52),
-                 width - Inches(0.16), Inches(0.44), sub, sub_size, INK_DIM,
-                 font=MONO, align=PP_ALIGN.CENTER)
-    else:
-        add_text(slide, left + Inches(0.08), top, width - Inches(0.16), height,
-                 title, title_size, INK, bold=True, align=PP_ALIGN.CENTER,
-                 anchor=MSO_ANCHOR.MIDDLE)
+def accent_bar(slide, left, top, width, c1, c2, height=Pt(4)):
+    bar = rect(slide, left, top, width, height, grad_pair=(c1, c2), grad_angle=0.0)
+    return bar
 
 
-def flow_arrow(slide, left, top):
-    add_text(slide, left, top, Inches(0.45), Inches(0.6), "→", 24, INK_FAINT,
-             align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+def box(slide, left, top, width, height, lines, border, size=30,
+        fill=PANEL, text_color=INK):
+    rect(slide, left, top, width, height, fill_color=fill, line_color=border,
+         radius=True, line_w=2.25)
+    add_text(slide, left + Inches(0.08), top, width - Inches(0.16), height,
+             lines, size, text_color, bold=True, align=PP_ALIGN.CENTER,
+             anchor=MSO_ANCHOR.MIDDLE, line_spacing=1.05)
 
 
-def spec_row(slide, top, key, value, sub, width=Inches(10.6)):
-    left = Inches(0.9)
-    rect(slide, left, top - Inches(0.16), width, Pt(1), LINE)
-    add_text(slide, left, top + Inches(0.05), Inches(2.3), Inches(0.4),
-             key.upper(), 13, INK_FAINT, font=MONO, letter_spacing=70)
-    add_text(slide, left + Inches(2.5), top - Inches(0.06),
-             width - Inches(2.5), Inches(0.55), value, 22, INK, bold=True)
-    add_text(slide, left + Inches(2.5), top + Inches(0.42),
-             width - Inches(2.5), Inches(0.4), sub, 14.5, INK_DIM, font=MONO)
+def block_arrow_right(slide, left, top, width, height, color):
+    shp = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, left, top, width, height)
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = color
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
 
 
-def chip(slide, left, top, width, height, text, size=15):
-    rect(slide, left, top, width, height, BG_RAISED, radius=True)
-    rect(slide, left, top, Inches(0.07), height, ACCENT)
-    add_text(slide, left + Inches(0.26), top, width - Inches(0.34), height,
-             text, size, INK, font=MONO, anchor=MSO_ANCHOR.MIDDLE)
+def arrow_conn(slide, x1, y1, x2, y2, color, w=3.0):
+    conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, x1, y1, x2, y2)
+    conn.line.color.rgb = color
+    conn.line.width = Pt(w)
+    ln = conn.line._get_or_add_ln()
+    tail = ln.makeelement(qn("a:tailEnd"), {"type": "triangle", "w": "lg", "len": "lg"})
+    ln.append(tail)
+    return conn
 
 
-def stat_tile(slide, left, top, width, height, number, label,
-              num_color=INK, num_size=27):
-    rect(slide, left, top, width, height, BG_RAISED, line_color=LINE, radius=True)
-    add_text(slide, left, top + Inches(0.1), width, Inches(0.55), number,
-             num_size, num_color, bold=True, font=MONO, align=PP_ALIGN.CENTER)
-    add_text(slide, left + Inches(0.1), top + height - Inches(0.42),
-             width - Inches(0.2), Inches(0.36), label, 12.5, INK_FAINT,
-             font=MONO, align=PP_ALIGN.CENTER, letter_spacing=40, upper=True)
+def chip(slide, left, top, width, height, text, border, size=30):
+    rect(slide, left, top, width, height, fill_color=PANEL, line_color=border,
+         radius=True, line_w=2.0)
+    add_text(slide, left + Inches(0.1), top, width - Inches(0.2), height,
+             text, size, INK, bold=True, align=PP_ALIGN.CENTER,
+             anchor=MSO_ANCHOR.MIDDLE)
 
 
 # ------------------------------------------------------------------ build --
@@ -181,213 +182,196 @@ prs = Presentation()
 prs.slide_width = SLIDE_W
 prs.slide_height = SLIDE_H
 
-# ============================================================ 0 · Title ====
-s = new_slide(prs)
-add_text(s, Inches(1), Inches(2.0), Inches(11.33), Inches(0.4),
-         "BAIR ROBOT PUSHING  ·  WAN2.1-T2V-1.3B  ·  LORA", 13.5,
-         INK_FAINT, font=MONO, align=PP_ALIGN.CENTER, letter_spacing=150)
-add_text(s, Inches(1), Inches(2.55), Inches(11.33), Inches(1.9),
-         "Action-Conditioned\nWorld Models", 46, INK, bold=True,
-         align=PP_ALIGN.CENTER, line_spacing=1.05)
-rect(s, Inches(5.57), Inches(4.42), Inches(2.2), Pt(3), ACCENT)
-add_text(s, Inches(2.17), Inches(4.75), Inches(9), Inches(0.9),
-         "Teaching a pretrained video diffusion model to obey a command,\nnot just guess the future.",
-         21, INK_DIM, align=PP_ALIGN.CENTER, line_spacing=1.28)
-add_text(s, Inches(1), Inches(5.85), Inches(11.33), Inches(0.4),
-         "Dawidzard & Mihajlo   ·   advised by Nedko Savov & Danilo Djordjevic, INSAIT",
-         14.5, INK_FAINT, font=MONO, align=PP_ALIGN.CENTER)
+# ============================================================ 1 · Title ====
+s = new_slide(prs, RGBColor(0x2B, 0x1A, 0x5E), RGBColor(0x0B, 0x3B, 0x43), 130)
+add_text(s, Inches(1), Inches(1.75), Inches(11.33), Inches(0.6),
+         "BAIR · WAN2.1-1.3B · LORA", 30, CYAN, bold=True,
+         align=PP_ALIGN.CENTER, letter_spacing=140)
+add_text(s, Inches(1), Inches(2.45), Inches(11.33), Inches(2.0),
+         "Action-Conditioned\nWorld Models", 54, INK, bold=True,
+         align=PP_ALIGN.CENTER, line_spacing=1.02)
+accent_bar(s, Inches(5.27), Inches(4.55), Inches(2.8), PINK, TEAL, Pt(5))
+add_text(s, Inches(1.4), Inches(4.95), Inches(10.53), Inches(1.2),
+         "Teaching a pretrained video model to obey a command,\nnot just guess the future.",
+         30, DIM, align=PP_ALIGN.CENTER, line_spacing=1.2)
+add_text(s, Inches(1), Inches(6.35), Inches(11.33), Inches(0.6),
+         "Dawidzard  &  Mihajlo", 30, AMBER, bold=True, align=PP_ALIGN.CENTER)
 
-# ================================================ 1 · Motivation & goals ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.62), "Motivation")
-add_text(s, Inches(0.9), Inches(1.1), Inches(11), Inches(1.6),
+# ======================================================= 2 · Motivation ====
+s = new_slide(prs, RGBColor(0x1C, 0x2A, 0x6B), RGBColor(0x0E, 0x4A, 0x4A), 120)
+eyebrow(s, Inches(0.8), Inches(0.5), "Motivation", TEAL)
+add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(1.7),
          "A robot that can imagine what happens next\ncan plan before it acts.",
-         33, INK, bold=True, line_spacing=1.12)
+         38, INK, bold=True, line_spacing=1.1)
+accent_bar(s, Inches(0.8), Inches(2.95), Inches(3.2), TEAL, CYAN)
 
-fx, fy, fh = Inches(0.9), Inches(2.95), Inches(0.95)
-flow_box(s, fx, fy + Inches(0.55), Inches(1.8), fh, "frame", sub="now")
-flow_arrow(s, fx + Inches(1.85), fy + Inches(0.72))
-flow_box(s, fx + Inches(2.35), fy + Inches(0.55), Inches(1.7), fh, "model",
-         accent=True)
-flow_arrow(s, fx + Inches(4.1), fy + Inches(0.72))
-chip(s, fx + Inches(4.6), fy, Inches(2.6), Inches(0.58), "←  action: left", 16)
-chip(s, fx + Inches(4.6), fy + Inches(0.73), Inches(2.6), Inches(0.58), "↑  action: up", 16)
-chip(s, fx + Inches(4.6), fy + Inches(1.46), Inches(2.6), Inches(0.58), "→  action: right", 16)
-add_text(s, fx + Inches(7.6), fy + Inches(0.55), Inches(3.9), Inches(1.5),
-         "Can a pretrained video model be made to obey a robot command —\nand how precisely?",
-         19, INK_DIM, line_spacing=1.3, anchor=MSO_ANCHOR.MIDDLE)
+fy = Inches(3.35)
+box(s, Inches(0.8), fy + Inches(0.75), Inches(2.5), Inches(1.15), "frame", CYAN, 32)
+block_arrow_right(s, Inches(3.5), fy + Inches(1.08), Inches(0.85), Inches(0.5), CYAN)
+box(s, Inches(4.55), fy + Inches(0.75), Inches(2.5), Inches(1.15), "model", VIOLET, 32)
+block_arrow_right(s, Inches(7.25), fy + Inches(1.08), Inches(0.85), Inches(0.5), PINK)
+chip(s, Inches(8.3), fy, Inches(3.3), Inches(0.8), "←  left", PINK, 30)
+chip(s, Inches(8.3), fy + Inches(0.93), Inches(3.3), Inches(0.8), "↑  up", AMBER, 30)
+chip(s, Inches(8.3), fy + Inches(1.86), Inches(3.3), Inches(0.8), "→  right", TEAL, 30)
 
-add_text(s, Inches(0.9), Inches(5.45), Inches(1.4), Inches(0.5), "GOALS", 13,
-         INK_FAINT, font=MONO, letter_spacing=80)
-gw = Inches(3.65)
-gg = Inches(0.2)
-for i, g in enumerate(["condition on real robot actions",
-                       "measure how precisely it obeys",
-                       "find where it fails, and why"]):
-    chip(s, Inches(0.9) + i * (gw + gg), Inches(5.85), gw, Inches(0.6), g, 14)
-footer(s, 1)
+add_text(s, Inches(0.8), Inches(6.35), Inches(1.7), Inches(0.6), "Goals", 30,
+         SLATE, bold=True, upper=True, letter_spacing=80)
+gw, gg = Inches(3.25), Inches(0.2)
+for i, (g, c) in enumerate([("action control", PINK),
+                            ("precision", AMBER),
+                            ("failure modes", TEAL)]):
+    chip(s, Inches(2.45) + i * (gw + gg), Inches(6.3), gw, Inches(0.75), g, c, 30)
 
-# ============================================= 2 · Method: model & data ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.62), "Method — Model & Data")
-add_text(s, Inches(0.9), Inches(1.1), Inches(11), Inches(1.4),
-         "One backbone, one dataset,\none small adapter.",
-         33, INK, bold=True, line_spacing=1.12)
+# ============================================ 3 · Architecture diagram =====
+s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
 
-top = Inches(3.0)
-for key, val, sub in [
-    ("Backbone", "Wan2.1-T2V-1.3B", "causal autoregressive video model (minWM) · teacher-forcing checkpoint"),
-    ("In / Out", "4 latent frames + action → next 4", "= 16 pixel frames per generated block"),
-    ("Dataset", "BAIR robot pushing, 64×64", "216,325 training windows · 256 held-out test scenes · 4D actions"),
-    ("Adapter", "LoRA r16 + action encoder", "19.4M trainable = 1.4% of the model · 15 lines changed upstream"),
-]:
-    spec_row(s, top, key, val, sub)
-    top += Inches(1.0)
-footer(s, 2)
+lane_h = Inches(1.3)
+# video lane (top, cyan/teal)
+y1 = Inches(1.2)
+box(s, Inches(0.6), y1, Inches(2.5), lane_h, "BAIR video\n64 × 64", CYAN)
+block_arrow_right(s, Inches(3.3), y1 + Inches(0.4), Inches(0.85), Inches(0.5), CYAN)
+box(s, Inches(4.35), y1, Inches(2.1), lane_h, "VAE\nencode", CYAN)
+block_arrow_right(s, Inches(6.65), y1 + Inches(0.4), Inches(0.85), Inches(0.5), CYAN)
+box(s, Inches(7.7), y1, Inches(2.1), lane_h, "4 latent\nframes", TEAL)
 
-# ======================================= 3 · Method: the two questions ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.62), "Method — Action Conditioning")
-add_text(s, Inches(0.9), Inches(1.1), Inches(11.5), Inches(0.7),
-         "The two questions everyone asks.", 33, INK, bold=True)
+# action lane (bottom, pink/violet)
+y2 = Inches(5.35)
+box(s, Inches(0.6), y2, Inches(2.5), lane_h, "actions\n4 × 4D", PINK)
+block_arrow_right(s, Inches(3.3), y2 + Inches(0.4), Inches(0.85), Inches(0.5), PINK)
+box(s, Inches(4.35), y2, Inches(2.1), lane_h, "MLP\n16 → 1536", PINK)
+block_arrow_right(s, Inches(6.65), y2 + Inches(0.4), Inches(0.85), Inches(0.5), PINK)
+box(s, Inches(7.7), y2, Inches(2.1), lane_h, "+ timestep\nAdaLN", VIOLET)
 
-fx, fy, fh, fw = Inches(0.9), Inches(2.15), Inches(1.2), Inches(2.55)
-gap = Inches(0.45)
-flow_box(s, fx, fy, fw, fh, "action", sub="4 per frame, flattened", title_size=17, sub_size=12)
-flow_arrow(s, fx + fw, fy + Inches(0.32))
-x2 = fx + fw + gap
-flow_box(s, x2, fy, fw, fh, "small MLP", sub="16→256→256→1536", title_size=17, sub_size=12)
-flow_arrow(s, x2 + fw, fy + Inches(0.32))
-x3 = x2 + fw + gap
-flow_box(s, x3, fy, fw, fh, "+ timestep\nembedding", accent=True, title_size=17)
-flow_arrow(s, x3 + fw, fy + Inches(0.32))
-x4 = x3 + fw + gap
-flow_box(s, x4, fy, fw, fh, "AdaLN, all\n30 DiT blocks", sub="+ LoRA r16", title_size=16, sub_size=12)
+# the DiT core (center right, violet gradient)
+dit = rect(s, Inches(10.15), Inches(2.75), Inches(2.55), Inches(2.0),
+           grad_pair=(RGBColor(0x6C, 0x3F, 0xB8), RGBColor(0x2E, 0x7E, 0x8C)),
+           line_color=AMBER, radius=True, line_w=2.5, grad_angle=35.0)
+add_text(s, Inches(10.15), Inches(2.75), Inches(2.55), Inches(2.0),
+         "30 DiT\nblocks\n+ LoRA r16", 30, INK, bold=True,
+         align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, line_spacing=1.02)
 
-add_text(s, Inches(0.9), Inches(3.85), Inches(11.5), Inches(0.45),
-         "A — How are the action embeddings built?", 19, INK, bold=True)
-add_text(s, Inches(0.9), Inches(4.3), Inches(11.5), Inches(0.95),
-         "Per latent frame: its 4 raw actions, flattened — never averaged. Actions are deltas, so the mean\nof “left, then back” is zero and the signal dies. Zero-init output layer: step 0 = untouched pretrained model.",
-         15.5, INK_DIM, font=MONO, line_spacing=1.3)
+# converging arrows into the DiT, and out to the decoded video
+arrow_conn(s, Inches(9.8), y1 + Inches(0.65), Inches(10.35), Inches(3.05), TEAL)
+arrow_conn(s, Inches(9.8), y2 + Inches(0.65), Inches(10.35), Inches(4.45), VIOLET)
+box(s, Inches(10.6), Inches(0.55), Inches(2.1), Inches(1.1), "next 4\nlatents", AMBER)
+arrow_conn(s, Inches(11.65), Inches(2.75), Inches(11.65), Inches(1.7), AMBER)
 
-add_text(s, Inches(0.9), Inches(5.45), Inches(11.5), Inches(0.45),
-         "B — How does the action steer the video?", 19, INK, bold=True)
-add_text(s, Inches(0.9), Inches(5.9), Inches(11.5), Inches(0.95),
-         "Added to the per-frame timestep embedding → AdaLN shift/scale/gate. The action modulates every\nblock on every frame — the text prompt is fixed and carries nothing.",
-         15.5, INK_DIM, font=MONO, line_spacing=1.3)
-footer(s, 3)
+add_text(s, Inches(0.6), Inches(3.35), Inches(8.5), Inches(0.7),
+         "1.4 % trainable  ·  15 lines changed upstream", 30, AMBER, bold=True)
 
-# ================================================= 4 · Result: control ====
-s = new_slide(prs)
-eyebrow(s, Inches(0), Inches(1.0), "Result", align=PP_ALIGN.CENTER,
+# ====================================== 4 · The two design decisions =======
+s = new_slide(prs, RGBColor(0x3D, 0x17, 0x48), RGBColor(0x14, 0x35, 0x5C), 120)
+eyebrow(s, Inches(0.8), Inches(0.5), "Method", VIOLET)
+add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(0.9),
+         "Two design decisions.", 40, INK, bold=True)
+accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), PINK, VIOLET)
+
+cw, ch2 = Inches(5.75), Inches(3.7)
+cy = Inches(2.6)
+rect(s, Inches(0.8), cy, cw, ch2, fill_color=PANEL, line_color=PINK,
+     radius=True, line_w=2.5)
+add_text(s, Inches(1.15), cy + Inches(0.4), cw - Inches(0.7), Inches(1.6),
+         "Flatten actions,\nnever average", 36, PINK, bold=True, line_spacing=1.08)
+add_text(s, Inches(1.15), cy + Inches(2.15), cw - Inches(0.7), Inches(1.3),
+         "the mean of “left, then\nback” is zero", 30, DIM, line_spacing=1.15)
+
+rect(s, Inches(6.85), cy, cw, ch2, fill_color=PANEL, line_color=TEAL,
+     radius=True, line_w=2.5)
+add_text(s, Inches(7.2), cy + Inches(0.4), cw - Inches(0.7), Inches(1.6),
+         "Modulate every\nblock, every frame", 36, TEAL, bold=True, line_spacing=1.08)
+add_text(s, Inches(7.2), cy + Inches(2.15), cw - Inches(0.7), Inches(1.3),
+         "action + timestep → AdaLN,\nzero-init start", 30, DIM, line_spacing=1.15)
+
+# ================================================= 5 · Result: control ====
+s = new_slide(prs, RGBColor(0x0F, 0x4D, 0x43), RGBColor(0x1A, 0x1F, 0x5C), 125)
+eyebrow(s, Inches(0), Inches(0.6), "Result", TEAL, align=PP_ALIGN.CENTER,
         width=Inches(13.333))
-add_text(s, Inches(0), Inches(1.45), Inches(13.333), Inches(2.4),
-         "99.6%", 135, INK, bold=True, font=MONO, align=PP_ALIGN.CENTER,
+add_text(s, Inches(0), Inches(1.05), Inches(13.333), Inches(2.5),
+         "99.6%", 150, INK, bold=True, align=PP_ALIGN.CENTER,
          anchor=MSO_ANCHOR.MIDDLE)
-add_text(s, Inches(1.67), Inches(4.0), Inches(10), Inches(0.85),
-         "of held-out scenes move in the commanded direction — 255 of 256.",
-         24, INK_DIM, align=PP_ALIGN.CENTER)
+add_text(s, Inches(1.2), Inches(3.75), Inches(10.93), Inches(0.7),
+         "of held-out scenes follow the command  (255 / 256)",
+         32, DIM, align=PP_ALIGN.CENTER)
 
-cw, ch, cgap = Inches(2.15), Inches(0.62), Inches(0.25)
+cw, ch, cgap = Inches(2.55), Inches(0.8), Inches(0.25)
 row_w = cw * 4 + cgap * 3
 cx = (SLIDE_W - row_w) / 2
-for glyph in ["↑  up  ✓", "↓  down  ✓", "←  left  ✓", "→  right  ✓"]:
-    rect(s, cx, Inches(5.0), cw, ch, BG_RAISED, line_color=ACCENT, radius=True)
-    add_text(s, cx, Inches(5.0), cw, ch, glyph, 17, ACCENT, bold=True,
-             font=MONO, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+for glyph, c in [("↑ up ✓", CYAN), ("↓ down ✓", VIOLET),
+                 ("← left ✓", PINK), ("→ right ✓", TEAL)]:
+    chip(s, cx, Inches(4.75), cw, ch, glyph, c, 30)
     cx += cw + cgap
 
-add_text(s, Inches(1.17), Inches(5.95), Inches(11), Inches(0.75),
-         "absolute direction accuracy 84.8% — the gap is scene dynamics carrying the arm, not disobedience\ncontrol saturates by ~32,000 samples and never drops · untrained baseline: 51.5% = chance",
-         13.5, INK_FAINT, font=MONO, align=PP_ALIGN.CENTER, line_spacing=1.35)
-footer(s, 4)
+add_text(s, Inches(1.2), Inches(6.1), Inches(10.93), Inches(0.7),
+         "absolute position accuracy: 84.8%", 30, AMBER, bold=True,
+         align=PP_ALIGN.CENTER)
 
-# ============================================ 5 · Controllability ladder ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.55), "Results — What the Action Is Worth")
-add_text(s, Inches(0.9), Inches(1.0), Inches(11.5), Inches(0.7),
-         "Same model, four levels of being informed.", 31, INK, bold=True)
+# ============================================ 6 · Controllability ladder ====
+s = new_slide(prs, RGBColor(0x35, 0x19, 0x4F), RGBColor(0x0C, 0x4A, 0x5E), 118)
+add_text(s, Inches(0.8), Inches(0.5), Inches(11.7), Inches(0.9),
+         "What is the action worth?", 40, INK, bold=True)
+accent_bar(s, Inches(0.8), Inches(1.45), Inches(3.2), AMBER, PINK)
 
-chart_left = Inches(3.7)
-chart_width = Inches(7.3)
-ceiling_db = 22.74
+chart_left = Inches(0.8)
+chart_width = Inches(10.6)
 scale_max = 24.0
-bars = [
-    ("no fine-tune", 7.12, False),
-    ("wrong action", 12.45, False),
-    ("no action (null)", 13.27, False),
-    ("real action", 18.56, True),
+ceiling_db = 22.74
+rows = [
+    ("no fine-tune", 7.12, SLATE),
+    ("wrong action", 12.45, CORAL),
+    ("no action", 13.27, AMBER),
+    ("real action", 18.56, TEAL),
 ]
-row_h = Inches(0.52)
-row_gap = Inches(0.30)
-top = Inches(2.15)
-for label, val, is_real in bars:
-    add_text(s, Inches(0.9), top, Inches(2.7), row_h, label, 16, INK_DIM,
-             font=MONO, anchor=MSO_ANCHOR.MIDDLE)
-    rect(s, chart_left, top, chart_width, row_h, BG_INSET, radius=True)
-    fw_bar = Emu(int(chart_width * (val / scale_max)))
-    rect(s, chart_left, top, fw_bar, row_h,
-         ACCENT if is_real else INK_FAINT, radius=True)
-    add_text(s, chart_left + chart_width + Inches(0.15), top, Inches(1.3),
-             row_h, f"{val:.1f} dB", 18, INK, bold=True, font=MONO,
+top = Inches(1.85)
+row_step = Inches(1.22)
+bar_h = Inches(0.5)
+for label, val, color in rows:
+    add_text(s, chart_left, top, Inches(6), Inches(0.55), label, 30, DIM,
+             bold=True)
+    bar_y = top + Inches(0.6)
+    rect(s, chart_left, bar_y, chart_width, bar_h, fill_color=PANEL, radius=True)
+    bw = Emu(int(chart_width * (val / scale_max)))
+    rect(s, chart_left, bar_y, bw, bar_h, fill_color=color, radius=True)
+    add_text(s, chart_left + bw + Inches(0.15), bar_y - Inches(0.06),
+             Inches(2.2), Inches(0.6), f"{val:.1f} dB", 30, INK, bold=True,
              anchor=MSO_ANCHOR.MIDDLE)
-    top += row_h + row_gap
+    top += row_step
 
-chart_bottom = top - row_gap + Inches(0.05)
 ceiling_x = chart_left + Emu(int(chart_width * (ceiling_db / scale_max)))
 conn = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, ceiling_x, Inches(1.85),
-                              ceiling_x, chart_bottom)
-conn.line.color.rgb = WARN
-conn.line.width = Pt(1.75)
+                              ceiling_x, top - row_step + Inches(1.1))
+conn.line.color.rgb = INK
+conn.line.width = Pt(2.5)
 conn.line.dash_style = MSO_LINE.DASH
-add_text(s, ceiling_x - Inches(2.6), Inches(1.52), Inches(2.5), Inches(0.32),
-         "VAE ceiling · 22.7 dB", 13, WARN, font=MONO, align=PP_ALIGN.RIGHT)
+add_text(s, ceiling_x - Inches(3.9), Inches(6.75), Inches(4.0), Inches(0.6),
+         "VAE ceiling · 22.7 dB", 30, INK, bold=True, align=PP_ALIGN.RIGHT)
 
-tw, th, tg = Inches(2.72), Inches(1.05), Inches(0.22)
-tx = Inches(0.9)
-ty = Inches(5.5)
-stat_tile(s, tx, ty, tw, th, "+5.29 dB", "value of the action", num_color=ACCENT)
-stat_tile(s, tx + (tw + tg), ty, tw, th, "0.785", "SSIM")
-stat_tile(s, tx + 2 * (tw + tg), ty, tw, th, "11.1", "FID")
-stat_tile(s, tx + 3 * (tw + tg), ty, tw, th, "81%", "of the VAE ceiling")
-
-add_text(s, Inches(0.9), Inches(6.68), Inches(11.5), Inches(0.35),
-         "PSNR, 256 held-out scenes, final checkpoint · untrained: FID 229, ΔPSNR −0.03 — none of this was already in the model",
-         13.5, INK_FAINT, font=MONO)
-footer(s, 5)
-
-# ============================================ 6 · Interactive widget =======
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.5), "Interactive Demo — Arm Control Panel")
-add_text(s, Inches(0.9), Inches(0.95), Inches(11.5), Inches(0.6),
-         "Click a command. The model imagines the rest.", 27, INK, bold=True)
-add_text(s, Inches(0.9), Inches(1.52), Inches(11.5), Inches(0.4),
-         "real renders · held-out scene · native 64 px · 4 denoising steps (24 steps buys 12% FID for 6× compute)",
-         13.5, INK_FAINT, font=MONO)
+# ============================================ 7 · Interactive widget =======
+s = new_slide(prs, RGBColor(0x10, 0x3C, 0x5C), RGBColor(0x2C, 0x1A, 0x52), 122)
+eyebrow(s, Inches(0.8), Inches(0.45), "Live demo", CYAN)
+add_text(s, Inches(0.8), Inches(1.05), Inches(11.7), Inches(0.8),
+         "Click a command.", 40, INK, bold=True)
 
 scr = Inches(2.95)
-sx, sy = Inches(0.9), Inches(2.15)
+sx, sy = Inches(0.8), Inches(2.15)
 rect(s, sx - Inches(0.1), sy - Inches(0.1), scr + Inches(0.2), scr + Inches(0.2),
-     BG_RAISED, line_color=LINE, radius=True)
+     fill_color=PANEL, line_color=CYAN, radius=True, line_w=2.0)
 s.shapes.add_picture(os.path.join(WIDGET, "screen_context.png"), sx, sy, scr, scr)
-add_text(s, sx, sy + scr + Inches(0.18), scr, Inches(0.35),
-         "START FRAME", 13, INK_FAINT, font=MONO, align=PP_ALIGN.CENTER,
-         letter_spacing=80)
+add_text(s, sx, sy + scr + Inches(0.15), scr, Inches(0.55), "start frame",
+         30, DIM, bold=True, align=PP_ALIGN.CENTER)
 
-link = rect(s, sx, sy + scr + Inches(0.62), scr, Inches(0.55), BG_RAISED,
-            line_color=ACCENT, radius=True)
+link = rect(s, sx, sy + scr + Inches(0.75), scr, Inches(0.7), fill_color=PANEL,
+            line_color=TEAL, radius=True, line_w=2.25)
 ltf = link.text_frame
 ltf.word_wrap = True
 ltf.vertical_anchor = MSO_ANCHOR.MIDDLE
 lp = ltf.paragraphs[0]
 lp.alignment = PP_ALIGN.CENTER
 lr = lp.add_run()
-lr.text = "OPEN FULL PANEL ↗"
-lr.font.size = Pt(14.5)
+lr.text = "FULL DEMO ↗"
+lr.font.size = Pt(30)
 lr.font.bold = True
-lr.font.name = MONO
-lr.font.color.rgb = ACCENT
-set_letter_spacing(lr, 60)
+lr.font.name = FONT
+lr.font.color.rgb = TEAL
 link.click_action.hyperlink.address = "arm_control_panel.html"
 
 tile = Inches(1.55)
@@ -395,10 +379,10 @@ tgap = Inches(0.13)
 px = Inches(4.85)
 py = Inches(2.0)
 cols = [px, px + tile + tgap, px + 2 * (tile + tgap)]
-rows = [py, py + tile + tgap, py + 2 * (tile + tgap)]
-pad = [("up", cols[1], rows[0]), ("left", cols[0], rows[1]),
-       ("still", cols[1], rows[1]), ("right", cols[2], rows[1]),
-       ("down", cols[1], rows[2])]
+rws = [py, py + tile + tgap, py + 2 * (tile + tgap)]
+pad = [("up", cols[1], rws[0]), ("left", cols[0], rws[1]),
+       ("still", cols[1], rws[1]), ("right", cols[2], rws[1]),
+       ("down", cols[1], rws[2])]
 for name, x, y in pad:
     s.shapes.add_movie(os.path.join(WIDGET, f"tile_{name}.mp4"), x, y, tile, tile,
                        poster_frame_image=os.path.join(WIDGET, f"tile_{name}.png"),
@@ -408,106 +392,90 @@ chx, chy, chs = Inches(10.35), Inches(2.35), Inches(2.1)
 s.shapes.add_movie(os.path.join(WIDGET, "tile_chain.mp4"), chx, chy, chs, chs,
                    poster_frame_image=os.path.join(WIDGET, "tile_chain.png"),
                    mime_type="video/mp4")
-add_text(s, chx - Inches(0.2), chy + chs + Inches(0.14), chs + Inches(0.4),
-         Inches(0.35), "FREE ROLLOUT ×4", 13, INK_FAINT, font=MONO,
-         align=PP_ALIGN.CENTER, letter_spacing=80)
-add_text(s, chx - Inches(0.35), chy + chs + Inches(0.52), chs + Inches(0.7),
-         Inches(0.6), "the model feeds on\nits own output — watch it drift",
-         12.5, INK_FAINT, font=MONO, align=PP_ALIGN.CENTER, line_spacing=1.25)
-footer(s, 6)
+add_text(s, chx - Inches(0.35), chy + chs + Inches(0.15), chs + Inches(0.7),
+         Inches(0.55), "free rollout", 30, DIM, bold=True,
+         align=PP_ALIGN.CENTER)
 
-# ============================================= 7 · Inverse dynamics ========
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.5), "Results — Inverse Dynamics")
-add_text(s, Inches(0.9), Inches(0.95), Inches(11.5), Inches(0.65),
-         "Choosing an action by imagining its outcome.", 29, INK, bold=True)
+# ============================================= 8 · Inverse dynamics ========
+s = new_slide(prs, RGBColor(0x14, 0x42, 0x4F), RGBColor(0x3B, 0x1E, 0x46), 118)
+eyebrow(s, Inches(0.8), Inches(0.45), "Inverse dynamics", VIOLET)
+add_text(s, Inches(0.8), Inches(1.05), Inches(11.7), Inches(0.8),
+         "Choosing an action by imagining its outcome.", 36, INK, bold=True)
 
 panel_w = Inches(10.4)
-panel_h = Inches(2.6)   # source is 768x192 = 4:1
+panel_h = Inches(2.6)
 panel_x = Inches(1.47)
-panel_y = Inches(1.85)
-rect(s, panel_x - Inches(0.06), panel_y - Inches(0.06), panel_w + Inches(0.12),
-     panel_h + Inches(0.12), BG_RAISED, line_color=LINE, radius=True)
+panel_y = Inches(2.05)
+rect(s, panel_x - Inches(0.07), panel_y - Inches(0.07), panel_w + Inches(0.14),
+     panel_h + Inches(0.14), fill_color=PANEL, line_color=VIOLET, radius=True,
+     line_w=2.0)
 s.shapes.add_picture(GOAL_PANEL, panel_x, panel_y, panel_w, panel_h)
 q = panel_w / 4
-for i, cap in enumerate(["GOAL (real future)", "BEST imagined", "WORST imagined",
-                         "score over (dx,dy) · white = closer"]):
-    add_text(s, panel_x + i * q, panel_y + panel_h + Inches(0.12), q,
-             Inches(0.35), cap, 12, INK_FAINT, font=MONO, align=PP_ALIGN.CENTER)
+for i, (cap, c) in enumerate([("goal", TEAL), ("best", CYAN),
+                              ("worst", CORAL), ("score map", AMBER)]):
+    add_text(s, panel_x + i * q, panel_y + panel_h + Inches(0.15), q,
+             Inches(0.55), cap, 30, c, bold=True, align=PP_ALIGN.CENTER)
 
-stat_tile(s, Inches(0.9), Inches(5.15), Inches(2.5), Inches(1.05), "15 / 20",
-          "sign agreement", num_color=ACCENT)
-add_text(s, Inches(3.7), Inches(5.15), Inches(8.7), Inches(1.15),
-         "36 candidate actions, one batched pass, same noise — pick the imagined future closest to the goal.\nChance is 10/20. This scene: chose (+0.042, +0.014), truth was (+0.035, +0.012) — direction and\nmagnitude order right, without ever seeing the answer. Bias: it overshoots strength.",
-         14, INK_DIM, font=MONO, line_spacing=1.3)
-add_text(s, Inches(0.9), Inches(6.55), Inches(11.5), Inches(0.35),
-         "misses cluster where the true action ≈ 0, where sign is meaningless · the goal is the episode's own recorded future — verifiable, not “looks plausible”",
-         12.5, INK_FAINT, font=MONO)
-footer(s, 7)
+rect(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), fill_color=PANEL,
+     line_color=TEAL, radius=True, line_w=2.25)
+add_text(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), "15 / 20",
+         48, TEAL, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+add_text(s, Inches(4.5), Inches(5.6), Inches(8.0), Inches(1.35),
+         "36 imagined futures, one pass — pick the\nclosest to the goal.  Chance: 10 / 20.",
+         30, DIM, line_spacing=1.15)
 
-# ===================================================== 8 · Limitations ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.55), "Limitations — Free Rollout")
-add_text(s, Inches(0.9), Inches(1.0), Inches(11.6), Inches(1.35),
-         "Two different things fail — and only one\nis the one we suspected.",
-         30, INK, bold=True, line_spacing=1.12)
+# ===================================================== 9 · Limitations ====
+s = new_slide(prs, RGBColor(0x4A, 0x1E, 0x2E), RGBColor(0x1C, 0x20, 0x50), 122)
+eyebrow(s, Inches(0.8), Inches(0.5), "Limitations", CORAL)
+add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(0.9),
+         "Two failures in free rollout.", 40, INK, bold=True)
+accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), CORAL, VIOLET)
 
-card_w, card_h = Inches(3.72), Inches(2.35)
+card_w, card_h = Inches(3.75), Inches(2.6)
 cgap = Inches(0.25)
-cy = Inches(2.75)
+cy = Inches(2.6)
 cards = [
-    ("98–100%", ACCENT, "relative control at depth 3\nthe model never stops obeying"),
-    ("79% → 72%", WARN, "absolute accuracy, depth 1→2\nthe scene drifts under the arm"),
-    ("+97% → +57%", INK, "image decay (FID), halved by\nscheduled sampling · −1.5 dB cost"),
+    ("98–100%", TEAL, "still obeys"),
+    ("79 → 72%", CORAL, "position drifts"),
+    ("+97 → +57%", AMBER, "decay halved"),
 ]
 for i, (num, color, label) in enumerate(cards):
-    x = Inches(0.9) + i * (card_w + cgap)
-    rect(s, x, cy, card_w, card_h, BG_RAISED,
-         line_color=color if color != INK else LINE, radius=True, line_w=1.75)
-    add_text(s, x, cy + Inches(0.28), card_w, Inches(0.9), num, 40, color,
-             bold=True, font=MONO, align=PP_ALIGN.CENTER)
-    add_text(s, x + Inches(0.2), cy + Inches(1.4), card_w - Inches(0.4),
-             Inches(0.85), label, 13.5, INK_DIM, font=MONO,
-             align=PP_ALIGN.CENTER, line_spacing=1.3)
+    x = Inches(0.8) + i * (card_w + cgap)
+    rect(s, x, cy, card_w, card_h, fill_color=PANEL, line_color=color,
+         radius=True, line_w=2.5)
+    add_text(s, x, cy + Inches(0.45), card_w, Inches(1.0), num, 44, color,
+             bold=True, align=PP_ALIGN.CENTER)
+    add_text(s, x + Inches(0.2), cy + Inches(1.7), card_w - Inches(0.4),
+             Inches(0.7), label, 30, DIM, bold=True, align=PP_ALIGN.CENTER)
 
-add_text(s, Inches(0.9), Inches(5.5), Inches(11.6), Inches(1.3),
-         "Exposure bias explains the image decay — not the localization drift. So the fix is scene anchoring\nand longer context, not stronger conditioning. Scheduled sampling (self-predicted context on 50% of\nsamples) halves the decay but costs one-step fidelity: a trade, not a win. All numbers: 256 tries.",
-         15.5, INK_DIM, line_spacing=1.32)
-footer(s, 8)
+add_text(s, Inches(0.8), Inches(5.75), Inches(11.7), Inches(0.9),
+         "Exposure bias breaks the image — not obedience.",
+         32, INK, bold=True)
 
-# ============================================ 9 · Contributions & next ====
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.62), "What We Actually Measured")
-add_text(s, Inches(0.9), Inches(1.1), Inches(11.5), Inches(0.7),
-         "Four findings a single number would hide.", 31, INK, bold=True)
+# =========================================== 10 · Contributions & next ====
+s = new_slide(prs, RGBColor(0x1F, 0x1C, 0x56), RGBColor(0x0F, 0x46, 0x40), 125)
+eyebrow(s, Inches(0.8), Inches(0.5), "What we measured", AMBER)
+add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(0.9),
+         "Four findings one number would hide.", 38, INK, bold=True)
+accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), AMBER, TEAL)
 
 items = [
-    ("Control and fidelity mature on different time scales",
-     "control saturates at ~32k samples · fidelity keeps improving 8× longer"),
-    ("Rollout failure is two separable failures",
-     "exposure bias degrades the image · localization drift loses the arm"),
-    ("Distillation isn't needed here — a negative result",
-     "the base doesn't matter, and 4-step sampling survives fine-tuning: 6× faster, free"),
-    ("The VAE sets the ceiling: 22.74 dB",
-     "our 18.56 dB is 81% of what 64×64 allows — context for every PSNR"),
+    ("Control and fidelity mature on different clocks", CYAN),
+    ("Rollout failure is two separable failures", PINK),
+    ("Distillation isn't needed — 6× speed is free", TEAL),
+    ("The VAE sets the ceiling: 22.7 dB", AMBER),
 ]
-top = Inches(2.1)
-for i, (title, sub) in enumerate(items):
-    add_text(s, Inches(0.9), top, Inches(0.55), Inches(0.5), f"{i+1}", 22,
-             ACCENT, bold=True, font=MONO)
-    add_text(s, Inches(1.55), top - Inches(0.03), Inches(10.6), Inches(0.5),
-             title, 19.5, INK, bold=True)
-    add_text(s, Inches(1.55), top + Inches(0.4), Inches(10.6), Inches(0.4),
-             sub, 13.5, INK_DIM, font=MONO)
-    top += Inches(0.98)
+top = Inches(2.55)
+for i, (title, c) in enumerate(items):
+    add_text(s, Inches(0.8), top, Inches(0.7), Inches(0.6), f"{i+1}", 34, c,
+             bold=True)
+    add_text(s, Inches(1.65), top, Inches(11.0), Inches(0.6), title, 30, INK,
+             bold=True)
+    top += Inches(0.82)
 
-add_text(s, Inches(0.9), Inches(6.1), Inches(11.6), Inches(0.4),
-         "Two of the four are negative. All four we could have kept quiet.",
-         17, INK, italic=True)
-add_text(s, Inches(0.9), Inches(6.62), Inches(11.6), Inches(0.35),
-         "next: scene anchoring · real self-forcing · 256×256 (lifts the ceiling) · action-strength calibration",
-         13.5, INK_FAINT, font=MONO)
-footer(s, 9)
+add_text(s, Inches(0.8), Inches(6.15), Inches(11.7), Inches(0.6),
+         "Two are negative.  All four we could have kept quiet.",
+         30, DIM, italic=True)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")

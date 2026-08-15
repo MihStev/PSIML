@@ -2120,6 +2120,18 @@ otkazuje LOKALIZACIJA; scheduled sampling +97%→+57% uz −1.5 dB) → 4 doprin
   dijagnoze drifta — odgovor na "zašto rollout puca" sada glasi: model ne prestaje da
   sluša, scena odluta; exposure bias objašnjava sliku, ne kontrolu).
 
+## REDIZAJN PREZENTACIJE v2 (15.08, popodne) — na zahtjev korisnika, poslije "miruje"
+
+Vizuelna prerada decka (sadržaj/brojevi nepromijenjeni): **Times New Roman svuda, NIŠTA ispod
+30 pt** (provjereno automatskim auditom svih runova), footeri i mentori sa naslovnice izbačeni,
+**gradijentna pozadina po slajdu** (različit par boja za svaki, akcenti teal/pink/amber/cyan/
+violet). Slajd 3 = **arhitekturni dijagram bez naslova** (video traka + akciona traka konvergiraju
+u DiT, block-arrow strelice + konektori sa strelicama kroz oxml `a:tailEnd`). Slajd 4 sveden na
+dvije kartice (flatten-ne-average / AdaLN svaki blok). Slajd 5: samo 99.6% + 4 čipa + vidljivo
+84.8% (ostalo se priča). Slajd 6 ladder prerađen **label-iznad-bara** (ništa jedno pored drugog =
+nema preklapanja), svaka prečka svoja boja, VAE plafon isprekidana linija. Sitni potpisi na
+widget/inverse/limitations slajdovima izbačeni ili skraćeni na ≥30 pt — izlagači ih pričaju.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
