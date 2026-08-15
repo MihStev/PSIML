@@ -200,27 +200,29 @@ add_text(s, Inches(1), Inches(6.35), Inches(11.33), Inches(0.6),
 # ======================================================= 2 · Motivation ====
 s = new_slide(prs, RGBColor(0x1C, 0x2A, 0x6B), RGBColor(0x0E, 0x4A, 0x4A), 120)
 eyebrow(s, Inches(0.8), Inches(0.5), "Motivation", TEAL)
-add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(1.7),
+add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(1.6),
          "A robot that can imagine what happens next\ncan plan before it acts.",
          38, INK, bold=True, line_spacing=1.1)
 accent_bar(s, Inches(0.8), Inches(2.95), Inches(3.2), TEAL, CYAN)
 
-fy = Inches(3.35)
-box(s, Inches(0.8), fy + Inches(0.75), Inches(2.5), Inches(1.15), "frame", CYAN, 32)
-block_arrow_right(s, Inches(3.5), fy + Inches(1.08), Inches(0.85), Inches(0.5), CYAN)
-box(s, Inches(4.55), fy + Inches(0.75), Inches(2.5), Inches(1.15), "model", VIOLET, 32)
-block_arrow_right(s, Inches(7.25), fy + Inches(1.08), Inches(0.85), Inches(0.5), PINK)
-chip(s, Inches(8.3), fy, Inches(3.3), Inches(0.8), "←  left", PINK, 30)
-chip(s, Inches(8.3), fy + Inches(0.93), Inches(3.3), Inches(0.8), "↑  up", AMBER, 30)
-chip(s, Inches(8.3), fy + Inches(1.86), Inches(3.3), Inches(0.8), "→  right", TEAL, 30)
-
-add_text(s, Inches(0.8), Inches(6.35), Inches(1.7), Inches(0.6), "Goals", 30,
-         SLATE, bold=True, upper=True, letter_spacing=80)
-gw, gg = Inches(3.25), Inches(0.2)
+add_text(s, Inches(0.8), Inches(3.45), Inches(5.9), Inches(1.3),
+         "Without a world model,\nyou learn the hard way.",
+         32, INK, bold=True, line_spacing=1.15)
 for i, (g, c) in enumerate([("action control", PINK),
                             ("precision", AMBER),
                             ("failure modes", TEAL)]):
-    chip(s, Inches(2.45) + i * (gw + gg), Inches(6.3), gw, Inches(0.75), g, c, 30)
+    chip(s, Inches(0.8), Inches(4.85) + i * Inches(0.87), Inches(5.3),
+         Inches(0.75), g, c, 30)
+
+# DARPA Robotics Challenge Finals 2015: an Atlas (WARNER, WPI-CMU) mid-fall on
+# the rubble task. U.S. Navy photo via Wikimedia Commons, CC BY 2.0.
+img_w, img_h = Inches(4.9), Inches(4.15)
+ix, iy = Inches(7.15), Inches(2.95)
+rect(s, ix - Inches(0.08), iy - Inches(0.08), img_w + Inches(0.16),
+     img_h + Inches(0.16), fill_color=PANEL, line_color=CORAL, radius=True,
+     line_w=2.25)
+s.shapes.add_picture("/home/mls10/presentation/robot_fall.jpg", ix, iy,
+                     img_w, img_h)
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
@@ -350,19 +352,18 @@ add_text(s, ceiling_x - Inches(3.9), Inches(6.75), Inches(4.0), Inches(0.6),
 
 # ============================================ 7 · Interactive widget =======
 s = new_slide(prs, RGBColor(0x10, 0x3C, 0x5C), RGBColor(0x2C, 0x1A, 0x52), 122)
-eyebrow(s, Inches(0.8), Inches(0.45), "Live demo", CYAN)
-add_text(s, Inches(0.8), Inches(1.05), Inches(11.7), Inches(0.8),
-         "Click a command.", 40, INK, bold=True)
+add_text(s, Inches(0.7), Inches(0.35), Inches(11.9), Inches(0.75),
+         "Live demo: click a command.", 36, INK, bold=True)
 
-scr = Inches(2.95)
-sx, sy = Inches(0.8), Inches(2.15)
+scr = Inches(2.7)
+sx, sy = Inches(0.7), Inches(1.5)
 rect(s, sx - Inches(0.1), sy - Inches(0.1), scr + Inches(0.2), scr + Inches(0.2),
      fill_color=PANEL, line_color=CYAN, radius=True, line_w=2.0)
 s.shapes.add_picture(os.path.join(WIDGET, "screen_context.png"), sx, sy, scr, scr)
-add_text(s, sx, sy + scr + Inches(0.15), scr, Inches(0.55), "start frame",
+add_text(s, sx, sy + scr + Inches(0.18), scr, Inches(0.55), "start frame",
          30, DIM, bold=True, align=PP_ALIGN.CENTER)
 
-link = rect(s, sx - Inches(0.1), sy + scr + Inches(0.75), scr + Inches(0.2),
+link = rect(s, sx - Inches(0.1), sy + scr + Inches(0.8), scr + Inches(0.2),
             Inches(0.75), fill_color=PANEL, line_color=TEAL, radius=True,
             line_w=2.25)
 ltf = link.text_frame
@@ -378,10 +379,10 @@ lr.font.name = FONT
 lr.font.color.rgb = TEAL
 link.click_action.hyperlink.address = "arm_control_panel.html"
 
-tile = Inches(1.55)
-tgap = Inches(0.13)
-px = Inches(4.85)
-py = Inches(2.0)
+tile = Inches(1.85)
+tgap = Inches(0.14)
+px = Inches(3.9)
+py = Inches(1.4)
 cols = [px, px + tile + tgap, px + 2 * (tile + tgap)]
 rws = [py, py + tile + tgap, py + 2 * (tile + tgap)]
 pad = [("up", cols[1], rws[0]), ("left", cols[0], rws[1]),
@@ -392,11 +393,11 @@ for name, x, y in pad:
                        poster_frame_image=os.path.join(WIDGET, f"tile_{name}.png"),
                        mime_type="video/mp4")
 
-chx, chy, chs = Inches(10.35), Inches(2.35), Inches(2.1)
+chx, chy, chs = Inches(10.05), Inches(2.4), Inches(2.8)
 s.shapes.add_movie(os.path.join(WIDGET, "tile_chain.mp4"), chx, chy, chs, chs,
                    poster_frame_image=os.path.join(WIDGET, "tile_chain.png"),
                    mime_type="video/mp4")
-add_text(s, chx - Inches(0.35), chy + chs + Inches(0.15), chs + Inches(0.7),
+add_text(s, chx - Inches(0.2), chy + chs + Inches(0.18), chs + Inches(0.4),
          Inches(0.55), "free rollout", 30, DIM, bold=True,
          align=PP_ALIGN.CENTER)
 
