@@ -2096,6 +2096,30 @@ apsolutna pozicija ruke odluta iako je odziv na komandu netaknut. To je problem
 DRIFTA SCENE, ne problem kondicioniranja — i vodi drugom rješenju (sidrenje na pravi
 kadar, duži kontekst), ne jačem kondicioniranju.
 
+## PREZENTACIJA FINALIZOVANA (15.08, prije podne) — ZAVRŠNO STANJE, repo miruje
+
+Deck prerađen po `PREZENTACIJA_BRIEF.md` i zaključan. **Tačno 10 slajdova** (naslov + 9):
+motivacija+ciljevi → metod (model/podaci) → metod (dva pitanja: embeddingi, AdaLN) →
+**99.6%** (NE 100% — obavezna ograda iz briefa; uz apsolutnih 84.8% i objašnjenje razlike) →
+ljestvica upravljivosti (+5.29 dB, VAE plafon) → interaktivni widget → inverse dynamics
+(15/20, panel idx108) → ograničenja (ispravljena priča: kontrola preživljava rollout 98-100%,
+otkazuje LOKALIZACIJA; scheduled sampling +97%→+57% uz −1.5 dB) → 4 doprinosa (2 negativna).
+**Šala-slajd (74σ) IZBAČEN na zahtjev korisnika** — kod za njega uklonjen iz buildera.
+
+- **Scheduled sampling u prezentaciji: kao NALAZ na slajdovima, NE kao model** — svi demo
+  klipovi/widget/brojevi generisani iz glavnog `bair_lora_big/step_8000.pt`. Selfpred
+  checkpoint se nigdje ne koristi za generisanje (na dubini 1 ima gori PSNR — namjerno).
+- Isporuka: `/home/mls10/presentation/{BAIR_LoRA_Presentation.pptx, arm_control_panel.html}`
+  — skinuti OBA u isti folder (relativni hyperlink). Builder: `lora_action/
+  build_presentation_pptx.py` (u repou, reprodukuje deck jednom komandom).
+- Status poruka za mentore sastavljena i predata korisniku (rezime: 99.6%/84.8%, 5.29 dB,
+  18.56/0.785/11.1 na 81% plafona, 4-step besplatno ubrzanje, selfpred razmjena, dijagnoza
+  drifta, inverse dynamics 15/20).
+- **Repo od ovog trenutka MIRUJE** — dalje su samo probe izlaganja i teorija
+  (`talk_prep_day5.md`; napomena: sekcija 2.7 i Q&A #5 tamo su pisani PRIJE jutarnje
+  dijagnoze drifta — odgovor na "zašto rollout puca" sada glasi: model ne prestaje da
+  sluša, scena odluta; exposure bias objašnjava sliku, ne kontrolu).
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
