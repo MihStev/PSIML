@@ -1988,6 +1988,58 @@ i joke slajd u pravom PowerPointu**.
    exposure bias, DMD, metrike i gdje lažu), brojevi napamet, Q&A za mentore, lista ograda
    ("šta NE tvrditi"), jutarnja checklista. Proći kroz to prije probe izlaganja.
 
+## SCHEDULED SAMPLING — REZULTAT (15.08, 06:55) — GLAVNI NALAZ POSLJEDNJE NOĆI
+
+Trening 4000 koraka gotov u 06:11 bez greške, 8 checkpointa u `bair_lora_selfpred/`.
+MC rollout (256 pokušaja, dubine 1-3, seed 0, `step_4000.pt`) gotov u 06:55.
+
+### KVALITET SE RASPADA UPOLA SPORIJE — kontrola se NE popravlja
+
+| model | FVD* 1→3 | porast | FID 1→3 | porast |
+|---|---|---|---|---|
+| običan | 76.2 / 89.5 / 98.2 | **+28.9%** | 35.35 / 54.31 / 69.56 | **+96.8%** |
+| DMD | 78.1 / 90.9 / 98.0 | +25.5% | 34.74 / 53.35 / 64.27 | +85.0% |
+| **selfpred** | **71.1 / 79.5 / 82.0** | **+15.3%** | **35.29 / 47.71 / 55.52** | **+57.3%** |
+
+**Tačnost pravca (kontrola) — NEPROMIJENJENA:**
+
+| dubina | običan | DMD | selfpred |
+|---|---|---|---|
+| 1 | 0.789 (0.735-0.835) | 0.805 (0.752-0.849) | **0.730** (0.673-0.781) |
+| 2 | 0.719 (0.661-0.770) | 0.695 (0.636-0.748) | **0.695** (0.636-0.748) |
+| 3 | 0.742 (0.685-0.792) | 0.781 (0.727-0.828) | **0.750** (0.694-0.799) |
+
+### TUMAČENJE — dva režima otkazivanja su ODVOJIVA
+
+Ovo je najvredniji nalaz projekta jer razdvaja nešto što smo do sada tretirali kao jednu stvar.
+U slobodnom rollout-u otkazuju **DVIJE** stvari, i mislili smo da otkazuju zajedno:
+
+1. **Kvalitet slike** se raspada (FVD*/FID rastu) — **scheduled sampling ovo ZNAČAJNO popravlja**,
+   prepolovljuje brzinu raspada (FID +57% umjesto +97% kroz tri dubine).
+2. **Kontrola** pada (tačnost pravca) — **scheduled sampling ovo NE popravlja uopšte**.
+
+Dakle izloženost (exposure bias) objašnjava **degradaciju slike**, ali NE i gubitak kontrole.
+Gubitak kontrole ima drugi uzrok koji nismo identifikovali.
+
+### CIJENA — plaćeno na dubini 1
+
+- PSNR na dubini 1: **15.78** naspram 17.26 (običan) — **-1.5 dB**
+- SSIM: 0.7189 naspram 0.7734
+- FID na dubini 1 je PRAKTIČNO ISTI (35.29 vs 35.35), a PSNR znatno gori -> slike izgledaju
+  jednako uvjerljivo ali se slabije poklapaju sa istinom. Model se manje oslanja na tačan
+  kontekst, više na sopstveni prior. To je tačno ono što trening na pokvarenom kontekstu radi.
+- Tačnost pravca na dubini 1 je 0.730 naspram 0.789; CI-jevi se jedva dodiruju, sugestivno je
+  ali nije razlučivo.
+
+**Poštena formulacija: razmjena.** Gubi se jednokoračna vjernost, dobija se otpornost rollout-a.
+
+### VAL LOSS NIJE RAZLIKOVAO NIŠTA — treći put
+
+Svih 8 validacija sva tri modela unutar -6% do +7%, prosjek oko nule (finalni: 0.1077 selfpred,
+0.1105 običan, 0.1108 DMD). Da smo se oslanjali na tu krivu, zaključili bismo da nijedan
+eksperiment ništa ne mijenja. **Teacher-forced val loss ne mjeri režim koji ovi eksperimenti
+ciljaju** — isto je bilo i sa DMD-om.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
