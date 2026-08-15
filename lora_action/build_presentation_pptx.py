@@ -460,11 +460,11 @@ eyebrow(s, Inches(0.8), Inches(0.45), "Inverse dynamics", VIOLET)
 add_text(s, Inches(0.8), Inches(1.05), Inches(11.7), Inches(0.8),
          "Choosing an action by imagining its outcome.", 36, INK, bold=True)
 
-gif_w, gif_h = Inches(7.4), Inches(4.76)   # canvas 1120x720
+gif_w, gif_h = Inches(7.4), Inches(4.757)   # canvas 1120x720, exact 1.556 AR
 gx, gy = Inches(0.7), Inches(1.85)
-rect(s, gx - Inches(0.08), gy - Inches(0.08), gif_w + Inches(0.16),
-     gif_h + Inches(0.16), fill_color=PANEL, line_color=VIOLET, radius=True,
-     line_w=2.0)
+rect(s, gx - Inches(0.05), gy - Inches(0.05), gif_w + Inches(0.10),
+     gif_h + Inches(0.10), fill_color=PANEL, line_color=VIOLET, radius=False,
+     line_w=2.5)
 s.shapes.add_picture("/home/mls10/presentation/search_tree.gif", gx, gy,
                      gif_w, gif_h)
 
@@ -509,31 +509,30 @@ add_text(s, Inches(0.8), Inches(5.75), Inches(11.7), Inches(0.9),
 # ================================================== 10 · What comes next ====
 s = new_slide(prs, RGBColor(0x1F, 0x1C, 0x56), RGBColor(0x0F, 0x46, 0x40), 125)
 eyebrow(s, Inches(0.8), Inches(0.5), "What's next", AMBER)
-add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(0.9),
-         "What comes next, and what it took.", 38, INK, bold=True)
-accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), AMBER, TEAL)
 
-rect(s, Inches(0.8), Inches(2.5), Inches(4.4), Inches(3.7), fill_color=PANEL,
-     line_color=AMBER, radius=True, line_w=2.5)
-add_text(s, Inches(0.8), Inches(2.8), Inches(4.4), Inches(1.2), "5 days", 72,
+add_text(s, Inches(0.6), Inches(1.35), Inches(5.6), Inches(1.7), "5 days", 100,
          AMBER, bold=True, align=PP_ALIGN.CENTER)
-add_text(s, Inches(0.8), Inches(4.15), Inches(4.4), Inches(0.55),
-         "one A100 GPU", 30, INK, bold=True, align=PP_ALIGN.CENTER)
-add_text(s, Inches(1.0), Inches(4.95), Inches(4.0), Inches(1.1),
-         "comparable efforts:\nmonths of iteration", 30, DIM,
-         align=PP_ALIGN.CENTER, line_spacing=1.15)
+add_text(s, Inches(0.6), Inches(3.2), Inches(5.6), Inches(0.55),
+         "us, on one A100 GPU", 30, INK, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(6.2), Inches(1.9), Inches(1.0), Inches(0.8), "vs", 40, DIM,
+         bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(7.2), Inches(1.35), Inches(5.6), Inches(1.7), "months", 100,
+         SLATE, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(7.2), Inches(3.2), Inches(5.6), Inches(0.55),
+         "typical for this problem", 30, DIM, align=PP_ALIGN.CENTER)
+
+accent_bar(s, Inches(0.8), Inches(4.25), Inches(11.7), AMBER, TEAL)
 
 steps = [
-    ("scene anchoring for long rollouts", TEAL),
+    ("scene anchoring, so long rollouts stop drifting", TEAL),
     ("true self-forcing training", CYAN),
-    ("256 × 256: lifts the 22.7 dB ceiling", VIOLET),
-    ("action-strength calibration", PINK),
+    ("256 × 256: lifts the 22.7 dB fidelity ceiling", VIOLET),
 ]
-top = Inches(2.6)
+top = Inches(4.7)
 for txt, c in steps:
-    add_text(s, Inches(5.75), top, Inches(0.6), Inches(0.55), "→", 30, c, bold=True)
-    add_text(s, Inches(6.45), top, Inches(6.3), Inches(0.55), txt, 30, INK, bold=True)
-    top += Inches(0.95)
+    add_text(s, Inches(0.9), top, Inches(0.6), Inches(0.55), "→", 30, c, bold=True)
+    add_text(s, Inches(1.6), top, Inches(11.2), Inches(0.55), txt, 30, INK, bold=True)
+    top += Inches(0.85)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")
