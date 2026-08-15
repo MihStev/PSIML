@@ -229,48 +229,52 @@ s.shapes.add_movie("/home/mls10/presentation/robot_fail_clip.mp4", ix, iy,
                    mime_type="video/mp4")
 
 # ==================================== 3a · High-level pipeline (real data) ==
+# Input/output frames are from our own quickstart generation: the minWM
+# Action2V model, prompt "A Chinese boy ... cheeseburger", action = forward x19
+# (the _w19 clip). The BAIR fine-tune runs the same loop at 64x64.
 s = new_slide(prs, RGBColor(0x0E, 0x46, 0x3E), RGBColor(0x24, 0x1B, 0x4F), 120)
 add_text(s, Inches(0.7), Inches(0.4), Inches(12), Inches(0.75),
-         "One frame and a command in, sixteen frames out.", 36, INK, bold=True)
+         "One frame and a command in, a video out.", 36, INK, bold=True)
 accent_bar(s, Inches(0.7), Inches(1.2), Inches(3.2), TEAL, VIOLET)
 
-# input: a real held-out context frame
-rect(s, Inches(0.72), Inches(1.67), Inches(2.56), Inches(2.56),
+rect(s, Inches(0.62), Inches(1.92), Inches(3.06), Inches(1.83),
      fill_color=PANEL, line_color=CYAN, radius=True, line_w=2.25)
-s.shapes.add_picture("/home/mls10/presentation/widget/screen_context.png",
-                     Inches(0.8), Inches(1.75), Inches(2.4), Inches(2.4))
-add_text(s, Inches(0.6), Inches(4.35), Inches(2.8), Inches(0.55),
+s.shapes.add_picture("/home/mls10/presentation/burger_in.png",
+                     Inches(0.7), Inches(2.0), Inches(2.9), Inches(1.67))
+add_text(s, Inches(0.6), Inches(3.95), Inches(3.1), Inches(0.55),
          "current frame", 30, CYAN, bold=True, align=PP_ALIGN.CENTER)
-chip(s, Inches(0.8), Inches(5.15), Inches(2.4), Inches(0.8), "← ↑ → ↓", PINK, 30)
-add_text(s, Inches(0.6), Inches(6.1), Inches(2.8), Inches(0.55),
+chip(s, Inches(0.7), Inches(4.7), Inches(2.9), Inches(0.8), "forward ↥", PINK, 30)
+add_text(s, Inches(0.6), Inches(5.65), Inches(3.1), Inches(0.55),
          "action", 30, PINK, bold=True, align=PP_ALIGN.CENTER)
 
-block_arrow_right(s, Inches(3.6), Inches(3.35), Inches(0.95), Inches(0.55), CYAN)
+block_arrow_right(s, Inches(3.95), Inches(3.1), Inches(0.95), Inches(0.55), CYAN)
 
-# the model core
-core = rect(s, Inches(4.75), Inches(2.0), Inches(3.35), Inches(3.45),
+core = rect(s, Inches(5.05), Inches(1.95), Inches(3.2), Inches(3.5),
             grad_pair=(RGBColor(0x6C, 0x3F, 0xB8), RGBColor(0x2E, 0x7E, 0x8C)),
             line_color=AMBER, radius=True, line_w=2.5, grad_angle=35.0)
-add_text(s, Inches(4.75), Inches(2.25), Inches(3.35), Inches(1.0),
+add_text(s, Inches(5.05), Inches(2.2), Inches(3.2), Inches(1.0),
          "video model", 34, INK, bold=True, align=PP_ALIGN.CENTER)
-add_text(s, Inches(4.85), Inches(3.35), Inches(3.15), Inches(1.9),
-         "8 × 8 latent\ntokens\n4 denoising steps", 30, INK,
+add_text(s, Inches(5.15), Inches(3.3), Inches(3.0), Inches(1.9),
+         "latent tokens\nautoregressive\nblock by block", 30, INK,
          align=PP_ALIGN.CENTER, line_spacing=1.12)
 
-block_arrow_right(s, Inches(8.35), Inches(3.35), Inches(0.95), Inches(0.55), PINK)
+block_arrow_right(s, Inches(8.4), Inches(3.1), Inches(0.95), Inches(0.55), PINK)
 
-# output: the model's real generated frames for "right"
-rect(s, Inches(9.57), Inches(1.67), Inches(2.56), Inches(2.56),
+rect(s, Inches(9.52), Inches(1.92), Inches(3.06), Inches(1.83),
      fill_color=PANEL, line_color=TEAL, radius=True, line_w=2.25)
-s.shapes.add_picture("/home/mls10/presentation/hl_out2.png",
-                     Inches(9.65), Inches(1.75), Inches(2.4), Inches(2.4))
-add_text(s, Inches(9.45), Inches(4.35), Inches(2.8), Inches(0.55),
-         "16 new frames", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
-tx = Inches(9.05)
+s.shapes.add_picture("/home/mls10/presentation/burger_out.png",
+                     Inches(9.6), Inches(2.0), Inches(2.9), Inches(1.67))
+add_text(s, Inches(9.5), Inches(3.95), Inches(3.1), Inches(0.55),
+         "generated video", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
+tx = Inches(9.22)
 for tag in ["0", "1", "2"]:
-    s.shapes.add_picture(f"/home/mls10/presentation/hl_out{tag}.png",
-                         tx, Inches(5.15), Inches(1.14), Inches(1.14))
-    tx += Inches(1.26)
+    s.shapes.add_picture(f"/home/mls10/presentation/burger_mid{tag}.png",
+                         tx, Inches(4.75), Inches(1.15), Inches(0.66))
+    tx += Inches(1.25)
+
+add_text(s, Inches(0.7), Inches(6.05), Inches(12), Inches(0.55),
+         "our generation: camera command \u201cforward\u201d, held for the whole clip",
+         30, DIM, align=PP_ALIGN.CENTER)
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
@@ -529,9 +533,6 @@ for txt, c in steps:
     add_text(s, Inches(5.75), top, Inches(0.6), Inches(0.55), "→", 30, c, bold=True)
     add_text(s, Inches(6.45), top, Inches(6.3), Inches(0.55), txt, 30, INK, bold=True)
     top += Inches(0.95)
-
-add_text(s, Inches(0.8), Inches(6.6), Inches(11.7), Inches(0.55),
-         "The measurements are the contribution.", 30, DIM, italic=True)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")
