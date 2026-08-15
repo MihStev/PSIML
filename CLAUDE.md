@@ -2040,6 +2040,62 @@ Svih 8 validacija sva tri modela unutar -6% do +7%, prosjek oko nule (finalni: 0
 eksperiment ništa ne mijenja. **Teacher-forced val loss ne mjeri režim koji ovi eksperimenti
 ciljaju** — isto je bilo i sa DMD-om.
 
+## DIJAGNOZA GUBITKA KONTROLE (15.08, 11:26) — MODEL NE PRESTAJE DA SLUŠA
+
+`lora_action/control_diagnosis.py`, 64 scene, dubine 1-3, 4 koraka, isti seed za oba modela.
+Na svakoj dubini, iz ISTOG samogenerisanog konteksta: `gen_r` (desno), `gen_l` (lijevo),
+i `gen_r2` (opet desno) -> divergencija naspram **praga šuma izmjerenog NA TOJ DUBINI**.
+
+| model | dubina | divergencija | prag šuma | **odnos** | dir_rel | n |
+|---|---|---|---|---|---|---|
+| običan | 1 | 48.07 | 15.35 | **3.13** | 1.000 | 64 |
+| običan | 2 | 52.21 | 23.16 | **2.25** | 0.984 | 64 |
+| običan | 3 | 46.29 | 24.53 | **1.89** | 1.000 | 64 |
+| selfpred | 1 | 49.69 | 15.04 | **3.30** | 1.000 | 64 |
+| selfpred | 2 | 55.48 | 22.92 | **2.42** | 1.000 | 64 |
+| selfpred | 3 | 51.47 | 24.82 | **2.07** | 0.984 | 64 |
+
+### NALAZ 1 — kontrola NIJE izgubljena, izgubljena je LOKALIZACIJA
+
+**Relativna tačnost pravca je 98-100% na SVAKOJ dubini, kod OBA modela.** Poslije tri
+samogenerisana bloka, "desno" i dalje završava desno od "lijevo", praktično uvijek.
+
+MC rollout je na istim dubinama davao 0.789 / 0.719 / 0.742 — i to NIJE protivrječnost, nego
+odgovor. MC daje svakoj sceni SOPSTVENU nasumičnu akciju i pita je li se ruka pomjerila baš
+tako (apsolutno). Ovaj test pita razdvaja li model suprotne komande iz istog konteksta
+(relativno).
+
+Dakle: **model i dalje posluša akciju; ono što otkazuje je gdje ruka ZAVRŠI u kadru.** Scena
+odluta, pa komandovani pomak pada u odnosu na ruku koja više nije tamo gdje je bila.
+"Sluša ali promašuje", a ne "prestaje da sluša".
+
+### NALAZ 2 — prag šuma RASTE sa dubinom, pa se sirova divergencija NE SMIJE čitati
+
+Prag: **15.35 -> 23.16 -> 24.53**. Sirova divergencija običnog modela ide 48.07 -> 52.21 ->
+46.29, dakle izgleda ravno/rastuće. Očišćena od šuma, odnos pada **3.13 -> 1.89 (-40%)**.
+Bez mjerenja praga po dubini zaključili bismo da kontrola JAČA sa dubinom.
+
+Odnos ostaje **~2x iznad šuma i na dubini 3** — akcija i dalje nosi mnogo više od slučajnosti.
+
+### NALAZ 3 — nezavisna reprodukcija praga šuma
+
+Prag na dubini 1 kod običnog modela: **15.35**. Juče izmjereno `evaluate.py --noise_floor`:
+**15.35**. Druga skripta, druga putanja kroz kod, isti broj. Jaka potvrda oba mjerenja.
+
+### NALAZ 4 — scheduled sampling ipak čuva odziv na akciju, malo
+
+Odnos je viši na SVAKOJ dubini: 3.30/2.42/2.07 naspram 3.13/2.25/1.89 (+5 do +10%).
+Dosljedno kroz sve tri dubine, ali margina je mala — ne bih to prodavao kao efekat bez
+više seedova. Bitno je da ide u ISTOM smjeru kao i popravka kvaliteta slike.
+
+### ŠTA OVO MIJENJA U PRIČI
+
+Jutros: "rollout se raspada, izloženost objašnjava sliku ali ne i kontrolu, ne znamo zašto".
+Sada: **kontrola se ne gubi.** Gubi se sposobnost modela da zadrži scenu na mjestu, pa
+apsolutna pozicija ruke odluta iako je odziv na komandu netaknut. To je problem
+DRIFTA SCENE, ne problem kondicioniranja — i vodi drugom rješenju (sidrenje na pravi
+kadar, duži kontekst), ne jačem kondicioniranju.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
