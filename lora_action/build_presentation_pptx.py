@@ -220,9 +220,9 @@ for i, (g, c) in enumerate([("action control", PINK),
 # (robot_fall.jpg, CC BY 2.0) stays on disk as a swap-in alternative.
 img_w, img_h = Inches(6.2), Inches(3.49)   # clip is 640x360, keep 16:9
 ix, iy = Inches(6.15), Inches(3.35)
-rect(s, ix - Inches(0.08), iy - Inches(0.08), img_w + Inches(0.16),
-     img_h + Inches(0.16), fill_color=PANEL, line_color=CORAL, radius=True,
-     line_w=2.25)
+rect(s, ix - Inches(0.05), iy - Inches(0.05), img_w + Inches(0.10),
+     img_h + Inches(0.10), fill_color=PANEL, line_color=CORAL, radius=False,
+     line_w=2.5)
 s.shapes.add_movie("/home/mls10/presentation/robot_fail_clip.mp4", ix, iy,
                    img_w, img_h,
                    poster_frame_image="/home/mls10/presentation/robot_fail_poster.png",
@@ -260,21 +260,22 @@ add_text(s, Inches(5.15), Inches(3.3), Inches(3.0), Inches(1.9),
 
 block_arrow_right(s, Inches(8.4), Inches(3.1), Inches(0.95), Inches(0.55), PINK)
 
-rect(s, Inches(9.52), Inches(1.92), Inches(3.06), Inches(1.83),
-     fill_color=PANEL, line_color=TEAL, radius=True, line_w=2.25)
-s.shapes.add_picture("/home/mls10/presentation/burger_out.png",
-                     Inches(9.6), Inches(2.0), Inches(2.9), Inches(1.67))
-add_text(s, Inches(9.5), Inches(3.95), Inches(3.1), Inches(0.55),
-         "generated video", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
-tx = Inches(9.22)
+mv_w, mv_h = Inches(3.75), Inches(2.16)   # 832x480
+mx, my = Inches(9.0), Inches(2.05)
+rect(s, mx - Inches(0.05), my - Inches(0.05), mv_w + Inches(0.10),
+     mv_h + Inches(0.10), fill_color=PANEL, line_color=TEAL, radius=False,
+     line_w=2.5)
+s.shapes.add_movie("/home/mls10/presentation/burger_demo.mp4", mx, my,
+                   mv_w, mv_h,
+                   poster_frame_image="/home/mls10/presentation/burger_mid1.png",
+                   mime_type="video/mp4")
+add_text(s, Inches(9.0), Inches(4.45), Inches(3.75), Inches(0.55),
+         "generated video ▶", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
+tx = Inches(9.25)
 for tag in ["0", "1", "2"]:
     s.shapes.add_picture(f"/home/mls10/presentation/burger_mid{tag}.png",
-                         tx, Inches(4.75), Inches(1.15), Inches(0.66))
-    tx += Inches(1.25)
-
-add_text(s, Inches(0.7), Inches(6.05), Inches(12), Inches(0.55),
-         "our generation: camera command \u201cforward\u201d, held for the whole clip",
-         30, DIM, align=PP_ALIGN.CENTER)
+                         tx, Inches(5.25), Inches(1.05), Inches(0.61))
+    tx += Inches(1.15)
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
