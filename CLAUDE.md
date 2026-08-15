@@ -1976,6 +1976,18 @@ se slajdovi ne mogu renderovati za vizuelnu provjeru — geometrija računata ru
 verifikovano (11 slajdova / 6 videa / 3 slike / 1 link), **korisnik treba da pregleda widget
 i joke slajd u pravom PowerPointu**.
 
+## PLAN ZA JUTRO 15.08 (dogovoreno s korisnikom, kraj Mihajlove noćne sesije)
+
+1. **Dawidzardov agent ujutro radi još jedno ažuriranje konteksta + commit + push** (rezultat
+   noćnog scheduled sampling treninga + jutarnjeg MC testa). **Prvo `git pull`, pa sve ostalo.**
+2. **~8:00 — ažuriranje prezentacije** (`/home/mls10/presentation/BAIR_LoRA_Presentation.pptx`,
+   builder `lora_action/build_presentation_pptx.py`): uklopiti selfpred rezultat u "Next"/
+   "Limitations" slajdove, pa zajednički prolaz kroz SVE urađeno — provjera da priča ima smisla.
+3. **Fokus dana: teorijska osnova i priča, ne novi rezultati.** Priprema je napisana:
+   **`talk_prep_day5.md`** (u repou) — elevator pitch, teorija po temama (AdaLN injekcija,
+   exposure bias, DMD, metrike i gdje lažu), brojevi napamet, Q&A za mentore, lista ograda
+   ("šta NE tvrditi"), jutarnja checklista. Proći kroz to prije probe izlaganja.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
