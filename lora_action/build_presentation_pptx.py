@@ -191,11 +191,11 @@ add_text(s, Inches(1), Inches(2.45), Inches(11.33), Inches(2.0),
          "Action-Conditioned\nWorld Models", 54, INK, bold=True,
          align=PP_ALIGN.CENTER, line_spacing=1.02)
 accent_bar(s, Inches(5.27), Inches(4.55), Inches(2.8), PINK, TEAL, Pt(5))
-add_text(s, Inches(1.4), Inches(4.95), Inches(10.53), Inches(1.2),
-         "Teaching a pretrained video model to obey a command,\nnot just guess the future.",
-         30, DIM, align=PP_ALIGN.CENTER, line_spacing=1.2)
+add_text(s, Inches(1.4), Inches(4.95), Inches(10.53), Inches(0.75),
+         "Do we actually need world models?", 32, DIM, italic=True,
+         align=PP_ALIGN.CENTER)
 add_text(s, Inches(1), Inches(6.35), Inches(11.33), Inches(0.6),
-         "Dawidzard  &  Mihajlo", 30, AMBER, bold=True, align=PP_ALIGN.CENTER)
+         "David  &  Mihajlo", 30, AMBER, bold=True, align=PP_ALIGN.CENTER)
 
 # ======================================================= 2 · Motivation ====
 s = new_slide(prs, RGBColor(0x1C, 0x2A, 0x6B), RGBColor(0x0E, 0x4A, 0x4A), 120)
@@ -229,53 +229,66 @@ s.shapes.add_movie("/home/mls10/presentation/robot_fail_clip.mp4", ix, iy,
                    mime_type="video/mp4")
 
 # ==================================== 3a · High-level pipeline (real data) ==
-# Input/output frames are from our own quickstart generation: the minWM
-# Action2V model, prompt "A Chinese boy ... cheeseburger", action = forward x19
-# (the _w19 clip). The BAIR fine-tune runs the same loop at 64x64.
+# Frames/clip are our own quickstart generation (cheeseburger scene, camera
+# command forward x19). Narrate that this is the pretrained minWM demo; the
+# BAIR fine-tune runs the same loop at 64x64.
 s = new_slide(prs, RGBColor(0x0E, 0x46, 0x3E), RGBColor(0x24, 0x1B, 0x4F), 120)
 add_text(s, Inches(0.7), Inches(0.4), Inches(12), Inches(0.75),
          "One frame and a command in, a video out.", 36, INK, bold=True)
 accent_bar(s, Inches(0.7), Inches(1.2), Inches(3.2), TEAL, VIOLET)
 
-rect(s, Inches(0.62), Inches(1.92), Inches(3.06), Inches(1.83),
-     fill_color=PANEL, line_color=CYAN, radius=True, line_w=2.25)
+# input frame + action, each with its own arrow into the model
+rect(s, Inches(0.55), Inches(1.85), Inches(2.7), Inches(1.6),
+     fill_color=PANEL, line_color=CYAN, radius=False, line_w=2.5)
 s.shapes.add_picture("/home/mls10/presentation/burger_in.png",
-                     Inches(0.7), Inches(2.0), Inches(2.9), Inches(1.67))
-add_text(s, Inches(0.6), Inches(3.95), Inches(3.1), Inches(0.55),
+                     Inches(0.6), Inches(1.9), Inches(2.6), Inches(1.5))
+add_text(s, Inches(0.5), Inches(3.55), Inches(2.8), Inches(0.55),
          "current frame", 30, CYAN, bold=True, align=PP_ALIGN.CENTER)
-chip(s, Inches(0.7), Inches(4.7), Inches(2.9), Inches(0.8), "forward ↥", PINK, 30)
-add_text(s, Inches(0.6), Inches(5.65), Inches(3.1), Inches(0.55),
+chip(s, Inches(0.6), Inches(4.6), Inches(2.6), Inches(0.8), "forward ↥", PINK, 30)
+add_text(s, Inches(0.5), Inches(5.55), Inches(2.8), Inches(0.55),
          "action", 30, PINK, bold=True, align=PP_ALIGN.CENTER)
 
-block_arrow_right(s, Inches(3.95), Inches(3.1), Inches(0.95), Inches(0.55), CYAN)
+block_arrow_right(s, Inches(3.35), Inches(2.4), Inches(0.7), Inches(0.5), CYAN)
+arrow_conn(s, Inches(3.3), Inches(4.95), Inches(4.35), Inches(4.35), PINK, w=4.0)
 
-core = rect(s, Inches(5.05), Inches(1.95), Inches(3.2), Inches(3.5),
-            grad_pair=(RGBColor(0x6C, 0x3F, 0xB8), RGBColor(0x2E, 0x7E, 0x8C)),
-            line_color=AMBER, radius=True, line_w=2.5, grad_angle=35.0)
-add_text(s, Inches(5.05), Inches(2.2), Inches(3.2), Inches(1.0),
-         "video model", 34, INK, bold=True, align=PP_ALIGN.CENTER)
-add_text(s, Inches(5.15), Inches(3.3), Inches(3.0), Inches(1.9),
-         "latent tokens\nautoregressive\nblock by block", 30, INK,
-         align=PP_ALIGN.CENTER, line_spacing=1.12)
+# model core
+rect(s, Inches(4.15), Inches(2.15), Inches(2.7), Inches(2.9),
+     grad_pair=(RGBColor(0x6C, 0x3F, 0xB8), RGBColor(0x2E, 0x7E, 0x8C)),
+     line_color=AMBER, radius=True, line_w=2.5, grad_angle=35.0)
+add_text(s, Inches(4.15), Inches(2.55), Inches(2.7), Inches(1.0),
+         "video\nmodel", 34, INK, bold=True, align=PP_ALIGN.CENTER,
+         line_spacing=1.05)
+add_text(s, Inches(4.2), Inches(4.15), Inches(2.6), Inches(0.6),
+         "block by block", 30, INK, align=PP_ALIGN.CENTER)
 
-block_arrow_right(s, Inches(8.4), Inches(3.1), Inches(0.95), Inches(0.55), PINK)
+block_arrow_right(s, Inches(6.95), Inches(3.35), Inches(0.6), Inches(0.5), VIOLET)
 
-mv_w, mv_h = Inches(3.75), Inches(2.16)   # 832x480
-mx, my = Inches(9.0), Inches(2.05)
-rect(s, mx - Inches(0.05), my - Inches(0.05), mv_w + Inches(0.10),
-     mv_h + Inches(0.10), fill_color=PANEL, line_color=TEAL, radius=False,
-     line_w=2.5)
-s.shapes.add_movie("/home/mls10/presentation/burger_demo.mp4", mx, my,
-                   mv_w, mv_h,
+# what comes out of the model: a grid of latent tokens
+rect(s, Inches(7.65), Inches(2.5), Inches(1.9), Inches(1.9), fill_color=PANEL,
+     line_color=VIOLET, radius=True, line_w=2.25)
+tok_cols = [TEAL, CYAN, VIOLET, PINK]
+for r_ in range(4):
+    for c_ in range(4):
+        rect(s, Inches(7.65) + Inches(0.19) + c_ * Inches(0.40),
+             Inches(2.5) + Inches(0.19) + r_ * Inches(0.40),
+             Inches(0.32), Inches(0.32), fill_color=tok_cols[(r_ + c_) % 4],
+             radius=True)
+add_text(s, Inches(7.3), Inches(4.55), Inches(2.6), Inches(0.55),
+         "latent tokens", 30, VIOLET, bold=True, align=PP_ALIGN.CENTER)
+
+block_arrow_right(s, Inches(9.65), Inches(3.35), Inches(0.6), Inches(0.5), AMBER)
+add_text(s, Inches(9.3), Inches(3.95), Inches(1.3), Inches(0.55),
+         "decode", 30, AMBER, bold=True, align=PP_ALIGN.CENTER)
+
+# output: the playable generated clip
+rect(s, Inches(10.3), Inches(2.55), Inches(2.7), Inches(1.6),
+     fill_color=PANEL, line_color=TEAL, radius=False, line_w=2.5)
+s.shapes.add_movie("/home/mls10/presentation/burger_demo.mp4",
+                   Inches(10.35), Inches(2.6), Inches(2.6), Inches(1.5),
                    poster_frame_image="/home/mls10/presentation/burger_mid1.png",
                    mime_type="video/mp4")
-add_text(s, Inches(9.0), Inches(4.45), Inches(3.75), Inches(0.55),
+add_text(s, Inches(10.0), Inches(4.35), Inches(3.3), Inches(0.55),
          "generated video ▶", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
-tx = Inches(9.25)
-for tag in ["0", "1", "2"]:
-    s.shapes.add_picture(f"/home/mls10/presentation/burger_mid{tag}.png",
-                         tx, Inches(5.25), Inches(1.05), Inches(0.61))
-    tx += Inches(1.15)
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
@@ -374,18 +387,16 @@ chart_width = Inches(10.6)
 scale_max = 24.0
 ceiling_db = 22.74
 rows = [
-    ("no fine-tune", 7.12, SLATE),
-    ("wrong action", 12.45, CORAL),
-    ("no action", 13.27, AMBER),
-    ("real action", 18.56, TEAL),
+    ("before our training", 7.12, SLATE),
+    ("after, with the real action", 18.56, TEAL),
 ]
-top = Inches(1.85)
-row_step = Inches(1.22)
-bar_h = Inches(0.5)
+top = Inches(2.35)
+row_step = Inches(1.75)
+bar_h = Inches(0.7)
 for label, val, color in rows:
-    add_text(s, chart_left, top, Inches(6), Inches(0.55), label, 30, DIM,
+    add_text(s, chart_left, top, Inches(8), Inches(0.55), label, 30, DIM,
              bold=True)
-    bar_y = top + Inches(0.6)
+    bar_y = top + Inches(0.62)
     rect(s, chart_left, bar_y, chart_width, bar_h, fill_color=PANEL, radius=True)
     bw = Emu(int(chart_width * (val / scale_max)))
     rect(s, chart_left, bar_y, bw, bar_h, fill_color=color, radius=True)
@@ -394,13 +405,15 @@ for label, val, color in rows:
              anchor=MSO_ANCHOR.MIDDLE)
     top += row_step
 
+add_text(s, Inches(8.1), Inches(3.95), Inches(2.0), Inches(0.65),
+         "+11.4 dB", 40, AMBER, bold=True)
 ceiling_x = chart_left + Emu(int(chart_width * (ceiling_db / scale_max)))
 conn = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, ceiling_x, Inches(1.85),
                               ceiling_x, top - row_step + Inches(1.1))
 conn.line.color.rgb = INK
 conn.line.width = Pt(2.5)
 conn.line.dash_style = MSO_LINE.DASH
-add_text(s, ceiling_x - Inches(3.9), Inches(6.75), Inches(4.0), Inches(0.6),
+add_text(s, ceiling_x - Inches(3.9), Inches(6.2), Inches(4.0), Inches(0.6),
          "VAE ceiling · 22.7 dB", 30, INK, bold=True, align=PP_ALIGN.RIGHT)
 
 # ============================================ 7 · Interactive widget =======
@@ -474,8 +487,8 @@ add_text(s, Inches(8.55), Inches(2.2), Inches(3.9), Inches(1.5), "15 / 20",
          48, TEAL, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
 add_text(s, Inches(8.55), Inches(3.85), Inches(3.9), Inches(0.55),
          "sign agreement", 30, DIM, bold=True, align=PP_ALIGN.CENTER)
-add_text(s, Inches(8.45), Inches(4.6), Inches(4.3), Inches(1.8),
-         "36 imagined futures\nin one pass, pick the\nclosest.  Chance: 10/20.",
+add_text(s, Inches(8.45), Inches(4.4), Inches(4.4), Inches(2.4),
+         "36 futures in one pass.\nChance: 10/20.\nNot tuned for search yet,\nsmall changes unlock it.",
          30, DIM, line_spacing=1.18)
 
 # ===================================================== 9 · Limitations ====
@@ -533,6 +546,37 @@ for txt, c in steps:
     add_text(s, Inches(0.9), top, Inches(0.6), Inches(0.55), "→", 30, c, bold=True)
     add_text(s, Inches(1.6), top, Inches(11.2), Inches(0.55), txt, 30, INK, bold=True)
     top += Inches(0.85)
+
+# ============================================================ 11 · Q&A ====
+s = new_slide(prs, RGBColor(0x1A, 0x1F, 0x5A), RGBColor(0x0D, 0x44, 0x4A), 128)
+add_text(s, Inches(0), Inches(0.5), Inches(13.333), Inches(1.3), "Q&A", 84,
+         INK, bold=True, align=PP_ALIGN.CENTER)
+accent_bar(s, Inches(5.77), Inches(1.95), Inches(1.8), PINK, TEAL, Pt(5))
+
+people = [
+    ("Mihajlo Stevanović", "in/mihajlo-stevanović", "mihastevanovic04@gmail.com",
+     "https://www.linkedin.com/in/mihajlo-stevanovi%C4%87/",
+     "/home/mls10/presentation/qa_mihajlo.png",
+     "/home/mls10/presentation/qa_mihajlo_auto.png", CYAN),
+    ("David Marković", "in/david-markovic-3a107a309", "dawidzards@gmail.com",
+     "https://www.linkedin.com/in/david-markovic-3a107a309/",
+     "/home/mls10/presentation/qa_david.png",
+     "/home/mls10/presentation/qa_david_auto.png", PINK),
+]
+for i, (name, li, mail, url, photo, fallback, col) in enumerate(people):
+    x = Inches(0.65) + i * Inches(6.3)
+    card = rect(s, x, Inches(2.3), Inches(5.7), Inches(4.5), fill_color=PANEL,
+                line_color=col, radius=True, line_w=2.5)
+    card.click_action.hyperlink.address = url
+    img = photo if os.path.exists(photo) else fallback
+    s.shapes.add_picture(img, x + Inches(1.95), Inches(2.65),
+                         Inches(1.8), Inches(1.8))
+    add_text(s, x + Inches(0.2), Inches(4.6), Inches(5.3), Inches(0.6), name,
+             32, INK, bold=True, align=PP_ALIGN.CENTER)
+    add_text(s, x + Inches(0.2), Inches(5.3), Inches(5.3), Inches(0.55), li,
+             30, col, bold=True, align=PP_ALIGN.CENTER)
+    add_text(s, x + Inches(0.2), Inches(5.95), Inches(5.3), Inches(0.55), mail,
+             30, DIM, align=PP_ALIGN.CENTER)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")
