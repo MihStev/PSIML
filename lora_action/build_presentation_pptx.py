@@ -4,7 +4,7 @@
 Structure follows the brief (10 min + 5 Q&A): motivation+goals, method (2 slides:
 the two questions the audience will ask), control result (99.6% -- NOT the 100%
 subset number, per the brief's mandatory caveat), the controllability ladder,
-the interactive widget, inverse dynamics, one interlude joke, limitations (the
+the interactive widget, inverse dynamics, limitations (the
 corrected story: control survives rollout, localization drifts), and a closing
 slide with the four measured contributions.
 
@@ -15,9 +15,6 @@ next to the .pptx (arm_control_panel.html -- restyled to this deck's template).
 
 Prerequisites:
   - widget tiles/posters in /home/mls10/presentation/widget (extract_demo1_widget.py)
-  - joke frames in /home/mls10/presentation/joke: last frame of
-    logs/generated_videos/gen_idx100_action-right.mp4 (the 74-sigma attempt) and
-    logs/gen_4actions/v2_idx100_right.mp4 (the fix), nearest-upscaled to 512
   - goal-search panel: logs/goal_search/goal_search_idx108.png
   - cp logs/demo/index.html /home/mls10/presentation/arm_control_panel.html
 
@@ -48,13 +45,12 @@ SANS = "Calibri"
 MONO = "Consolas"
 
 WIDGET = "/home/mls10/presentation/widget"
-JOKE = "/home/mls10/presentation/joke"
 GOAL_PANEL = "/home/mls10/logs/goal_search/goal_search_idx108.png"
 OUT_PATH = "/home/mls10/presentation/BAIR_LoRA_Presentation.pptx"
 
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
-TOTAL = 11
+TOTAL = 10
 
 
 # ------------------------------------------------------------- utilities --
@@ -449,40 +445,7 @@ add_text(s, Inches(0.9), Inches(6.55), Inches(11.5), Inches(0.35),
          12.5, INK_FAINT, font=MONO)
 footer(s, 7)
 
-# ==================================================== 8 · Interlude ========
-s = new_slide(prs)
-eyebrow(s, Inches(0.9), Inches(0.62), "Interlude")
-add_text(s, Inches(0.9), Inches(1.1), Inches(11.5), Inches(0.75),
-         "Respect the distribution.", 33, INK, bold=True)
-
-add_text(s, Inches(0.9), Inches(2.2), Inches(4.6), Inches(1.9),
-         "74σ", 110, WARN, bold=True, font=MONO)
-add_text(s, Inches(0.9), Inches(4.25), Inches(4.7), Inches(0.9),
-         "how far out of distribution\nour first commanded action was",
-         18, INK_DIM, line_spacing=1.3)
-add_text(s, Inches(0.9), Inches(5.25), Inches(4.7), Inches(0.45),
-         "typical |Δx| ≈ 0.04 · we asked for 3.0", 15, INK_FAINT, font=MONO)
-
-img = Inches(2.55)
-ix1, ix2, iy = Inches(6.6), Inches(9.55), Inches(2.25)
-for x, path in [(ix1, os.path.join(JOKE, "fixed.png")),
-                (ix2, os.path.join(JOKE, "sludge.png"))]:
-    rect(s, x - Inches(0.06), iy - Inches(0.06), img + Inches(0.12),
-         img + Inches(0.12), BG_RAISED, line_color=LINE, radius=True)
-    s.shapes.add_picture(path, x, iy, img, img)
-add_text(s, ix1, iy + img + Inches(0.14), img, Inches(0.65),
-         "what we expected\naction in distribution", 13.5, INK_DIM, font=MONO,
-         align=PP_ALIGN.CENTER, line_spacing=1.25)
-add_text(s, ix2, iy + img + Inches(0.14), img, Inches(0.65),
-         "what we got\nthe model's Green Period", 13.5, WARN, font=MONO,
-         align=PP_ALIGN.CENTER, line_spacing=1.25)
-
-add_text(s, Inches(0.9), Inches(6.35), Inches(11.5), Inches(0.45),
-         "Same checkpoint, same code, one number changed. Fixed within the hour — but first, we framed it.",
-         16, INK_DIM, italic=True)
-footer(s, 8)
-
-# ===================================================== 9 · Limitations ====
+# ===================================================== 8 · Limitations ====
 s = new_slide(prs)
 eyebrow(s, Inches(0.9), Inches(0.55), "Limitations — Free Rollout")
 add_text(s, Inches(0.9), Inches(1.0), Inches(11.6), Inches(1.35),
@@ -510,9 +473,9 @@ for i, (num, color, label) in enumerate(cards):
 add_text(s, Inches(0.9), Inches(5.5), Inches(11.6), Inches(1.3),
          "Exposure bias explains the image decay — not the localization drift. So the fix is scene anchoring\nand longer context, not stronger conditioning. Scheduled sampling (self-predicted context on 50% of\nsamples) halves the decay but costs one-step fidelity: a trade, not a win. All numbers: 256 tries.",
          15.5, INK_DIM, line_spacing=1.32)
-footer(s, 9)
+footer(s, 8)
 
-# =========================================== 10 · Contributions & next ====
+# ============================================ 9 · Contributions & next ====
 s = new_slide(prs)
 eyebrow(s, Inches(0.9), Inches(0.62), "What We Actually Measured")
 add_text(s, Inches(0.9), Inches(1.1), Inches(11.5), Inches(0.7),
@@ -544,7 +507,7 @@ add_text(s, Inches(0.9), Inches(6.1), Inches(11.6), Inches(0.4),
 add_text(s, Inches(0.9), Inches(6.62), Inches(11.6), Inches(0.35),
          "next: scene anchoring · real self-forcing · 256×256 (lifts the ceiling) · action-strength calibration",
          13.5, INK_FAINT, font=MONO)
-footer(s, 10)
+footer(s, 9)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")
