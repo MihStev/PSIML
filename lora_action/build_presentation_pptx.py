@@ -210,16 +210,16 @@ add_text(s, Inches(0.8), Inches(3.45), Inches(5.9), Inches(1.3),
          32, INK, bold=True, line_spacing=1.15)
 for i, (g, c) in enumerate([("action control", PINK),
                             ("precision", AMBER),
-                            ("failure modes", TEAL)]):
-    chip(s, Inches(0.8), Inches(4.85) + i * Inches(0.87), Inches(5.3),
+                            ("safety", TEAL)]):
+    chip(s, Inches(0.8), Inches(4.85) + i * Inches(0.87), Inches(4.9),
          Inches(0.75), g, c, 30)
 
 # Click-to-play fail clip (Unitree H1 flailing on its crane, 12.5 s, muted;
 # cut at 1:54 from youtube OqsqzPCLvE4 per user request -- talk use only, the
 # compilation is not ours to redistribute). The DRC Atlas fall photo
 # (robot_fall.jpg, CC BY 2.0) stays on disk as a swap-in alternative.
-img_w, img_h = Inches(4.9), Inches(2.76)   # clip is 640x360, keep 16:9
-ix, iy = Inches(7.15), Inches(3.55)
+img_w, img_h = Inches(6.2), Inches(3.49)   # clip is 640x360, keep 16:9
+ix, iy = Inches(6.15), Inches(3.35)
 rect(s, ix - Inches(0.08), iy - Inches(0.08), img_w + Inches(0.16),
      img_h + Inches(0.16), fill_color=PANEL, line_color=CORAL, radius=True,
      line_w=2.25)
@@ -227,6 +227,50 @@ s.shapes.add_movie("/home/mls10/presentation/robot_fail_clip.mp4", ix, iy,
                    img_w, img_h,
                    poster_frame_image="/home/mls10/presentation/robot_fail_poster.png",
                    mime_type="video/mp4")
+
+# ==================================== 3a · High-level pipeline (real data) ==
+s = new_slide(prs, RGBColor(0x0E, 0x46, 0x3E), RGBColor(0x24, 0x1B, 0x4F), 120)
+add_text(s, Inches(0.7), Inches(0.4), Inches(12), Inches(0.75),
+         "One frame and a command in, sixteen frames out.", 36, INK, bold=True)
+accent_bar(s, Inches(0.7), Inches(1.2), Inches(3.2), TEAL, VIOLET)
+
+# input: a real held-out context frame
+rect(s, Inches(0.72), Inches(1.67), Inches(2.56), Inches(2.56),
+     fill_color=PANEL, line_color=CYAN, radius=True, line_w=2.25)
+s.shapes.add_picture("/home/mls10/presentation/widget/screen_context.png",
+                     Inches(0.8), Inches(1.75), Inches(2.4), Inches(2.4))
+add_text(s, Inches(0.6), Inches(4.35), Inches(2.8), Inches(0.55),
+         "current frame", 30, CYAN, bold=True, align=PP_ALIGN.CENTER)
+chip(s, Inches(0.8), Inches(5.15), Inches(2.4), Inches(0.8), "← ↑ → ↓", PINK, 30)
+add_text(s, Inches(0.6), Inches(6.1), Inches(2.8), Inches(0.55),
+         "action", 30, PINK, bold=True, align=PP_ALIGN.CENTER)
+
+block_arrow_right(s, Inches(3.6), Inches(3.35), Inches(0.95), Inches(0.55), CYAN)
+
+# the model core
+core = rect(s, Inches(4.75), Inches(2.0), Inches(3.35), Inches(3.45),
+            grad_pair=(RGBColor(0x6C, 0x3F, 0xB8), RGBColor(0x2E, 0x7E, 0x8C)),
+            line_color=AMBER, radius=True, line_w=2.5, grad_angle=35.0)
+add_text(s, Inches(4.75), Inches(2.25), Inches(3.35), Inches(1.0),
+         "video model", 34, INK, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(4.85), Inches(3.35), Inches(3.15), Inches(1.9),
+         "8 × 8 latent\ntokens\n4 denoising steps", 30, INK,
+         align=PP_ALIGN.CENTER, line_spacing=1.12)
+
+block_arrow_right(s, Inches(8.35), Inches(3.35), Inches(0.95), Inches(0.55), PINK)
+
+# output: the model's real generated frames for "right"
+rect(s, Inches(9.57), Inches(1.67), Inches(2.56), Inches(2.56),
+     fill_color=PANEL, line_color=TEAL, radius=True, line_w=2.25)
+s.shapes.add_picture("/home/mls10/presentation/hl_out2.png",
+                     Inches(9.65), Inches(1.75), Inches(2.4), Inches(2.4))
+add_text(s, Inches(9.45), Inches(4.35), Inches(2.8), Inches(0.55),
+         "16 new frames", 30, TEAL, bold=True, align=PP_ALIGN.CENTER)
+tx = Inches(9.05)
+for tag in ["0", "1", "2"]:
+    s.shapes.add_picture(f"/home/mls10/presentation/hl_out{tag}.png",
+                         tx, Inches(5.15), Inches(1.14), Inches(1.14))
+    tx += Inches(1.26)
 
 # ============================================ 3 · Architecture diagram =====
 s = new_slide(prs, RGBColor(0x12, 0x3A, 0x5C), RGBColor(0x3A, 0x1D, 0x5E), 115)
@@ -411,27 +455,23 @@ eyebrow(s, Inches(0.8), Inches(0.45), "Inverse dynamics", VIOLET)
 add_text(s, Inches(0.8), Inches(1.05), Inches(11.7), Inches(0.8),
          "Choosing an action by imagining its outcome.", 36, INK, bold=True)
 
-panel_w = Inches(10.4)
-panel_h = Inches(2.6)
-panel_x = Inches(1.47)
-panel_y = Inches(2.05)
-rect(s, panel_x - Inches(0.07), panel_y - Inches(0.07), panel_w + Inches(0.14),
-     panel_h + Inches(0.14), fill_color=PANEL, line_color=VIOLET, radius=True,
+gif_w, gif_h = Inches(7.4), Inches(4.76)   # canvas 1120x720
+gx, gy = Inches(0.7), Inches(1.85)
+rect(s, gx - Inches(0.08), gy - Inches(0.08), gif_w + Inches(0.16),
+     gif_h + Inches(0.16), fill_color=PANEL, line_color=VIOLET, radius=True,
      line_w=2.0)
-s.shapes.add_picture(GOAL_PANEL, panel_x, panel_y, panel_w, panel_h)
-q = panel_w / 4
-for i, (cap, c) in enumerate([("goal", TEAL), ("best", CYAN),
-                              ("worst", CORAL), ("score map", AMBER)]):
-    add_text(s, panel_x + i * q, panel_y + panel_h + Inches(0.15), q,
-             Inches(0.55), cap, 30, c, bold=True, align=PP_ALIGN.CENTER)
+s.shapes.add_picture("/home/mls10/presentation/search_tree.gif", gx, gy,
+                     gif_w, gif_h)
 
-rect(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), fill_color=PANEL,
+rect(s, Inches(8.55), Inches(2.2), Inches(3.9), Inches(1.5), fill_color=PANEL,
      line_color=TEAL, radius=True, line_w=2.25)
-add_text(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), "15 / 20",
+add_text(s, Inches(8.55), Inches(2.2), Inches(3.9), Inches(1.5), "15 / 20",
          48, TEAL, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-add_text(s, Inches(4.5), Inches(5.6), Inches(8.0), Inches(1.35),
-         "36 imagined futures in one pass, pick the\nclosest to the goal.  Chance: 10 / 20.",
-         30, DIM, line_spacing=1.15)
+add_text(s, Inches(8.55), Inches(3.85), Inches(3.9), Inches(0.55),
+         "sign agreement", 30, DIM, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(8.45), Inches(4.6), Inches(4.3), Inches(1.8),
+         "36 imagined futures\nin one pass, pick the\nclosest.  Chance: 10/20.",
+         30, DIM, line_spacing=1.18)
 
 # ===================================================== 9 · Limitations ====
 s = new_slide(prs, RGBColor(0x4A, 0x1E, 0x2E), RGBColor(0x1C, 0x20, 0x50), 122)
@@ -461,30 +501,37 @@ add_text(s, Inches(0.8), Inches(5.75), Inches(11.7), Inches(0.9),
          "Exposure bias breaks the image, not obedience.",
          32, INK, bold=True)
 
-# =========================================== 10 · Contributions & next ====
+# ================================================== 10 · What comes next ====
 s = new_slide(prs, RGBColor(0x1F, 0x1C, 0x56), RGBColor(0x0F, 0x46, 0x40), 125)
-eyebrow(s, Inches(0.8), Inches(0.5), "What we measured", AMBER)
+eyebrow(s, Inches(0.8), Inches(0.5), "What's next", AMBER)
 add_text(s, Inches(0.8), Inches(1.15), Inches(11.7), Inches(0.9),
-         "Four findings one number would hide.", 38, INK, bold=True)
+         "What comes next, and what it took.", 38, INK, bold=True)
 accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), AMBER, TEAL)
 
-items = [
-    ("Control and fidelity mature on different clocks", CYAN),
-    ("Rollout failure is two separable failures", PINK),
-    ("Distillation isn't needed: 6× speed is free", TEAL),
-    ("The VAE sets the ceiling: 22.7 dB", AMBER),
-]
-top = Inches(2.55)
-for i, (title, c) in enumerate(items):
-    add_text(s, Inches(0.8), top, Inches(0.7), Inches(0.6), f"{i+1}", 34, c,
-             bold=True)
-    add_text(s, Inches(1.65), top, Inches(11.0), Inches(0.6), title, 30, INK,
-             bold=True)
-    top += Inches(0.82)
+rect(s, Inches(0.8), Inches(2.5), Inches(4.4), Inches(3.7), fill_color=PANEL,
+     line_color=AMBER, radius=True, line_w=2.5)
+add_text(s, Inches(0.8), Inches(2.8), Inches(4.4), Inches(1.2), "5 days", 72,
+         AMBER, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(0.8), Inches(4.15), Inches(4.4), Inches(0.55),
+         "one A100 GPU", 30, INK, bold=True, align=PP_ALIGN.CENTER)
+add_text(s, Inches(1.0), Inches(4.95), Inches(4.0), Inches(1.1),
+         "comparable efforts:\nmonths of iteration", 30, DIM,
+         align=PP_ALIGN.CENTER, line_spacing=1.15)
 
-add_text(s, Inches(0.8), Inches(6.15), Inches(11.7), Inches(0.6),
-         "Two are negative.  All four we could have kept quiet.",
-         30, DIM, italic=True)
+steps = [
+    ("scene anchoring for long rollouts", TEAL),
+    ("true self-forcing training", CYAN),
+    ("256 × 256: lifts the 22.7 dB ceiling", VIOLET),
+    ("action-strength calibration", PINK),
+]
+top = Inches(2.6)
+for txt, c in steps:
+    add_text(s, Inches(5.75), top, Inches(0.6), Inches(0.55), "→", 30, c, bold=True)
+    add_text(s, Inches(6.45), top, Inches(6.3), Inches(0.55), txt, 30, INK, bold=True)
+    top += Inches(0.95)
+
+add_text(s, Inches(0.8), Inches(6.6), Inches(11.7), Inches(0.55),
+         "The measurements are the contribution.", 30, DIM, italic=True)
 
 prs.save(OUT_PATH)
 print("saved:", OUT_PATH, f"{os.path.getsize(OUT_PATH)/1e6:.2f} MB")
