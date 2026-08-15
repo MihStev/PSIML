@@ -301,8 +301,11 @@ for glyph, c in [("↑ up ✓", CYAN), ("↓ down ✓", VIOLET),
     chip(s, cx, Inches(4.75), cw, ch, glyph, c, 30)
     cx += cw + cgap
 
-add_text(s, Inches(1.2), Inches(6.1), Inches(10.93), Inches(0.7),
+add_text(s, Inches(1.2), Inches(5.85), Inches(10.93), Inches(0.6),
          "absolute position accuracy: 84.8%", 30, AMBER, bold=True,
+         align=PP_ALIGN.CENTER)
+add_text(s, Inches(1.2), Inches(6.55), Inches(10.93), Inches(0.6),
+         "PSNR 18.6 dB   ·   SSIM 0.79   ·   FID 11.1", 30, DIM,
          align=PP_ALIGN.CENTER)
 
 # ============================================ 6 · Controllability ladder ====
@@ -359,10 +362,11 @@ s.shapes.add_picture(os.path.join(WIDGET, "screen_context.png"), sx, sy, scr, sc
 add_text(s, sx, sy + scr + Inches(0.15), scr, Inches(0.55), "start frame",
          30, DIM, bold=True, align=PP_ALIGN.CENTER)
 
-link = rect(s, sx, sy + scr + Inches(0.75), scr, Inches(0.7), fill_color=PANEL,
-            line_color=TEAL, radius=True, line_w=2.25)
+link = rect(s, sx - Inches(0.1), sy + scr + Inches(0.75), scr + Inches(0.2),
+            Inches(0.75), fill_color=PANEL, line_color=TEAL, radius=True,
+            line_w=2.25)
 ltf = link.text_frame
-ltf.word_wrap = True
+ltf.word_wrap = False
 ltf.vertical_anchor = MSO_ANCHOR.MIDDLE
 lp = ltf.paragraphs[0]
 lp.alignment = PP_ALIGN.CENTER
@@ -421,7 +425,7 @@ rect(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), fill_color=PANEL,
 add_text(s, Inches(0.8), Inches(5.55), Inches(3.4), Inches(1.35), "15 / 20",
          48, TEAL, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
 add_text(s, Inches(4.5), Inches(5.6), Inches(8.0), Inches(1.35),
-         "36 imagined futures, one pass — pick the\nclosest to the goal.  Chance: 10 / 20.",
+         "36 imagined futures in one pass, pick the\nclosest to the goal.  Chance: 10 / 20.",
          30, DIM, line_spacing=1.15)
 
 # ===================================================== 9 · Limitations ====
@@ -449,7 +453,7 @@ for i, (num, color, label) in enumerate(cards):
              Inches(0.7), label, 30, DIM, bold=True, align=PP_ALIGN.CENTER)
 
 add_text(s, Inches(0.8), Inches(5.75), Inches(11.7), Inches(0.9),
-         "Exposure bias breaks the image — not obedience.",
+         "Exposure bias breaks the image, not obedience.",
          32, INK, bold=True)
 
 # =========================================== 10 · Contributions & next ====
@@ -462,7 +466,7 @@ accent_bar(s, Inches(0.8), Inches(2.1), Inches(3.2), AMBER, TEAL)
 items = [
     ("Control and fidelity mature on different clocks", CYAN),
     ("Rollout failure is two separable failures", PINK),
-    ("Distillation isn't needed — 6× speed is free", TEAL),
+    ("Distillation isn't needed: 6× speed is free", TEAL),
     ("The VAE sets the ceiling: 22.7 dB", AMBER),
 ]
 top = Inches(2.55)
