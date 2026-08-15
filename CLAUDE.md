@@ -1930,6 +1930,52 @@ Poređenje koje čeka:
 latent frejmova = tačno 2 bloka, pa NEMA trećeg bloka sa istinom u koji bi se rollout produžio.
 Umjesto kotrljanja naprijed, kontekst kvarimo na način na koji ga model sam kvari.
 
+## PREZENTACIJA NAPRAVLJENA (15.08, ~00:00-00:45, Mihajlova sesija) — pptx sa ugrađenim widgetom
+
+**Isporuka u `/home/mls10/presentation/` (VAN repoa, ali skripte koje je grade SU u repou):**
+- **`BAIR_LoRA_Presentation.pptx`** — 11 slajdova, 1 MB, pravi PowerPoint (python-pptx),
+  16:9, tamna tema (deck paleta: ground `#0a0c0f`, teal akcenat `#38d6c4`, koral `#ff7a52`).
+- **`arm_control_panel.html`** — kopija demo1 (`logs/demo/index.html`), **restilizovana na
+  deck template** (CSS-only izmjena, markup/JS/DATA netaknuti; committed dark, bez light teme).
+  Meta hiperlinka "OPEN FULL PANEL ↗" sa widget slajda — **relativan link**, pa se OBA fajla
+  moraju skinuti u isti folder (Jupyter file browser → Download).
+- Postoji i raniji HTML deck kao Artifact (prva verzija prezentacije, prije pptx zahtjeva):
+  https://claude.ai/code/artifact/ca37c28e-6ccb-4c42-aa39-b0b214b42efb — NIJE ažuriran sa
+  widget/joke slajdovima, pptx je mjerodavan.
+
+**Struktura (Danilov okvir, skill `.claude/skills/build-presentation` — novi, committan):**
+naslov → motivacija → cilj → metod (model/podaci) → metod (kako akcija ulazi) → **100% WOW**
+(+ 4 čekirana smjera) → vjernost (delta-PSNR ljestvica 18.56/13.27/12.45/7.12 + VAE plafon
+22.74 kao isprekidana linija + traka metrika: +5.3 dB / SSIM 0.78 / FID 11.1 / 99.6%) →
+**interaktivni widget** → **šala** → ograničenja (97%→53% kartice) → sledeći koraci.
+
+**Interaktivni widget slajd (jer PowerPoint ne može ugraditi HTML):** demo1 rastavljen —
+frejmovi izvučeni iz base64 `DATA` bloba stranice (`lora_action/extract_demo1_widget.py`),
+scena **204** (najčitljivija od 4: čist sto, ruka sa prostorom u svim smjerovima; provjereno
+vizuelno protiv 3/51/108), pa ponovo sastavljen kao **click-to-play d-pad**: 5 movie kockica
+(↑↓←→ + still, posteri = strelica preko zatamnjenog start frejma, PIL poligoni bez fontova) +
+šesta "FREE ROLLOUT ×4" (chain, 77 frejmova, potpis "watch it drift" kao uvod u limitations).
+Native 64 px, nearest ×8 — bez ESRGAN-a u samom decku (demo1 izabran baš zato, korisnikova
+odluka usred posla: "demo1 je bolji").
+
+**GOTCHA — dva build-a demoa imaju RAZLIČIT base64 format** (vidi i sekciju NOC 14/15.08):
+demo1 = čist base64 PNG bez prefiksa; demo2 = 1-znak mime prefiks (`p`/`j`). Prvi pokušaj
+dekodiranja demo1 sa `s[1:]` (demo2 konvencija) pao je na poravnanju — provjeriti prvi znak
+(`iVBORw0KGgo` = PNG) prije sječenja.
+
+**Šala-slajd ("Respect the distribution."):** džinovski **74σ** + dvije prave slike — uspješna
+generacija naspram **autentičnog zelenog mulja** iz pokušaja #1 (`logs/generated_videos/
+gen_idx100_action-right.mp4`, zadnji frejm — BUG 1 iz istorije, akcija 3.0 pri σ=0.0405).
+Potpis "the model's Green Period". Sve istinito, ništa insceniran.
+
+**python-pptx gotchas (verzija 1.0.2):** (1) nema `pptx.enum.line` — dash style je
+`pptx.enum.dml.MSO_LINE_DASH_STYLE`; (2) textbox PREKO hiperlinkovanog shape-a presreće klik —
+tekst linka mora u `text_frame` samog shape-a; (3) `add_movie(..., poster_frame_image=...)`
+radi click-to-play u slideshow modu bez ičeg dodatnog; (4) nema LibreOffice u kontejneru pa
+se slajdovi ne mogu renderovati za vizuelnu provjeru — geometrija računata ručno, strukturno
+verifikovano (11 slajdova / 6 videa / 3 slike / 1 link), **korisnik treba da pregleda widget
+i joke slajd u pravom PowerPointu**.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
