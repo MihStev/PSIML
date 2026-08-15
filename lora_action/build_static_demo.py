@@ -59,14 +59,32 @@ def parse_args():
     p.add_argument("--chain_len", type=int, default=4)
     p.add_argument("--n_steps", type=int, default=4)
     p.add_argument("--dmd_schedule", action="store_true", default=True)
+    p.add_argument("--sr_weights", default=None,
+                    help="path to Real-ESRGAN weights; if given, every frame is upscaled 4x\n                          before embedding. ESRGAN and not the diffusion upscaler on purpose:\n                          the diffusion one invents texture independently per frame, so its\n                          fabricated patterns shimmer between frames -- far more visible in\n                          motion than in a still.")
+    p.add_argument("--jpeg_quality", type=int, default=0,
+                    help="0 = PNG (right for raw 64x64). At 4x, PNG blows the page size up to\n                          ~100 MB, so use JPEG ~85 -- visually indistinguishable on this\n                          content and 5-8x smaller.")
     p.add_argument("--out", default="/home/mls10/logs/demo/index.html")
     return p.parse_args()
 
 
+SR = {"model": None, "quality": 0}
+
+
 def png_b64(frame):
+    if SR["model"] is not None:
+        import torch as _t
+        with _t.no_grad():
+            x = _t.from_numpy(frame).float().div(255).permute(2, 0, 1).unsqueeze(0).cuda()
+            y = SR["model"](x).clamp(0, 1)
+        frame = (y[0].permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
     buf = io.BytesIO()
-    Image.fromarray(frame).save(buf, format="PNG", optimize=True)
-    return base64.b64encode(buf.getvalue()).decode()
+    if SR["quality"]:
+        Image.fromarray(frame).save(buf, format="JPEG", quality=SR["quality"], optimize=True)
+        mime = "jpeg"
+    else:
+        Image.fromarray(frame).save(buf, format="PNG", optimize=True)
+        mime = "png"
+    return mime[0] + base64.b64encode(buf.getvalue()).decode()
 
 
 def main():
@@ -104,6 +122,12 @@ def main():
     enc.load_state_dict(ckpt["action_encoder_state_dict"])
     a_mean, a_std = ckpt["action_mean"].to(device), ckpt["action_std"].to(device)
     cond = model.text_encoder(text_prompts=["a robot arm pushing objects on a table"])
+
+    if args.sr_weights:
+        from spandrel import ModelLoader
+        SR["model"] = ModelLoader().load_from_file(args.sr_weights).to("cuda").eval()
+        print(f"=== Real-ESRGAN x{SR['model'].scale} on every frame ===", flush=True)
+    SR["quality"] = args.jpeg_quality
 
     env = lmdb.open(args.lmdb_path, readonly=True, lock=False)
     lat_shape = get_array_shape_from_lmdb(env, "latents")
@@ -179,84 +203,121 @@ def main():
     print(f"  -> {args.out}  ({os.path.getsize(args.out)/1048576:.2f} MB)", flush=True)
 
 
-PAGE = """<title>Action-Conditioned World Model</title>
+PAGE = """<title>Arm Control Panel</title>
 <style>
-:root{--bg:#fbfbfd;--fg:#16181d;--dim:#6b7280;--line:#e3e5ea;--acc:#2563eb;--warn:#c2410c;--card:#fff}
-:root:not([data-theme="light"]){}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0f1115;--fg:#e8e8ea;--dim:#9096a1;--line:#252932;--acc:#5b9dff;--warn:#fb923c;--card:#161922}}
-:root[data-theme="dark"]{--bg:#0f1115;--fg:#e8e8ea;--dim:#9096a1;--line:#252932;--acc:#5b9dff;--warn:#fb923c;--card:#161922}
+:root{
+  --ground:#f6f7f4; --panel:#fdfdfb; --ink:#1b1e21; --dim:#6f7671;
+  --line:#dbdfd6; --line2:#eceee8; --accent:#8a5a12; --oxide:#a3401a; --bezel:#c9cdc3;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#131512; --panel:#1a1d19; --ink:#e7e8e3; --dim:#8d938a;
+  --line:#2b2f28; --line2:#22261f; --accent:#c8942f; --oxide:#d4703f; --bezel:#2f342c;
+}}
+:root[data-theme="dark"]{
+  --ground:#131512; --panel:#1a1d19; --ink:#e7e8e3; --dim:#8d938a;
+  --line:#2b2f28; --line2:#22261f; --accent:#c8942f; --oxide:#d4703f; --bezel:#2f342c;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);padding:32px 20px 56px;
- font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,sans-serif;
- display:flex;flex-direction:column;align-items:center}
-h1{font-size:22px;font-weight:650;margin:0 0 4px;letter-spacing:-.01em;text-align:center}
-.sub{color:var(--dim);font-size:13.5px;margin-bottom:26px;text-align:center;max-width:560px}
-.stage{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;
- display:flex;flex-direction:column;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-canvas{image-rendering:pixelated;border-radius:10px;background:#000;
- width:min(78vw,384px);height:min(78vw,384px);display:block}
-.pad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,58px);
- gap:8px;margin:20px 0 4px}
-button{background:transparent;color:var(--fg);border:1px solid var(--line);border-radius:10px;
- font-size:17px;cursor:pointer;transition:.13s;font-family:inherit}
-button:hover{background:var(--acc);border-color:var(--acc);color:#fff}
-button.on{background:var(--acc);border-color:var(--acc);color:#fff}
-.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px}
-.row button{font-size:12.5px;padding:7px 13px}
-#status{color:var(--dim);font-size:12.5px;margin-top:14px;height:18px;font-variant-numeric:tabular-nums}
-.warn{color:var(--warn);font-weight:600}
-.note{color:var(--dim);font-size:12.5px;margin-top:22px;max-width:560px;text-align:center;
- border-top:1px solid var(--line);padding-top:16px}
-kbd{border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px;font-family:inherit}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--ground);color:var(--ink);
+  padding:44px 20px 64px;
+  font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  display:flex;flex-direction:column;align-items:center;gap:0}
+.mono{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
+header{max-width:60ch;text-align:center;display:flex;flex-direction:column;gap:9px;margin-bottom:30px}
+h1{font-size:26px;font-weight:640;letter-spacing:-.021em;margin:0;text-wrap:balance;line-height:1.2}
+.spec{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:var(--dim)}
+.lede{font-size:14.5px;color:var(--dim);margin:0;text-wrap:balance}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+  padding:26px 26px 20px;display:flex;flex-direction:column;align-items:center;gap:0}
+.screen{padding:9px;background:var(--bezel);border-radius:3px;line-height:0}
+canvas{image-rendering:pixelated;display:block;background:#0a0b0a;border-radius:1px;
+  width:min(74vw,352px);height:min(74vw,352px)}
+.pad{display:grid;grid-template-columns:repeat(3,54px);grid-template-rows:repeat(3,54px);
+  gap:6px;margin:22px 0 0}
+button{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;
+  font-size:15px;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+button:hover{background:var(--accent);border-color:var(--accent);color:var(--panel)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);border-color:var(--accent);color:var(--panel)}
+.strip{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:18px;
+  padding-top:16px;border-top:1px solid var(--line2);width:100%}
+.strip button{font-size:11.5px;letter-spacing:.05em;padding:7px 12px;text-transform:uppercase}
+#status{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11.5px;letter-spacing:.045em;color:var(--dim);margin-top:18px;min-height:17px;
+  text-align:center;font-variant-numeric:tabular-nums}
+.warn{color:var(--oxide)}
+.branch{color:var(--accent)}
+footer{max-width:60ch;margin-top:30px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--dim);font-size:13px;text-align:center;text-wrap:pretty}
+footer b{color:var(--ink);font-weight:600}
+kbd{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  border:1px solid var(--line);border-radius:3px;padding:1px 5px;font-size:11px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
-<h1>Action-Conditioned Video World Model</h1>
-<div class="sub">BAIR robot pushing &middot; Wan2.1-T2V-1.3B + LoRA &middot; 64&times;64 &middot; __STEPS__ denoising steps<br>
-Press a direction: the arm moves the way it was told. Frames are model output, pre-rendered.</div>
-<div class="stage">
-  <canvas id="c" width="64" height="64"></canvas>
+<header>
+  <div class="spec">Wan2.1-T2V-1.3B + LoRA &middot; BAIR &middot; 64&times;64 &middot; __STEPS__ steps</div>
+  <h1>The arm moves the way it is told</h1>
+  <p class="lede">Press a direction. Every button starts from the same real context with the same
+  noise, so the only thing that changes is the commanded action.</p>
+</header>
+<div class="panel">
+  <div class="screen"><canvas id="c" width="64" height="64"></canvas></div>
   <div class="pad">
-    <div></div><button data-a="up">&#9650;</button><div></div>
-    <button data-a="left">&#9664;</button><button data-a="still">&#9679;</button><button data-a="right">&#9654;</button>
-    <div></div><button data-a="down">&#9660;</button><div></div>
+    <div></div><button data-a="up" aria-label="up">&#9650;</button><div></div>
+    <button data-a="left" aria-label="left">&#9664;</button>
+    <button data-a="still" aria-label="hold">&#9679;</button>
+    <button data-a="right" aria-label="right">&#9654;</button>
+    <div></div><button data-a="down" aria-label="down">&#9660;</button><div></div>
   </div>
-  <div class="row" id="scenes"></div>
-  <div class="row"><button id="chain">play free rollout &rarr;</button></div>
-  <div id="status">ready &middot; arrow keys work too</div>
+  <div class="strip" id="scenes"></div>
+  <div class="strip"><button id="chain">play free rollout</button></div>
+  <div id="status">ready</div>
 </div>
-<div class="note">Every button starts from the same real context with the same noise, so the only thing
-that changes is the commanded action. <b>Free rollout</b> feeds each generated block back in as the next
-context &mdash; control is measured to collapse after one self-generated block, and that is shown rather
-than hidden. <kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd> also work.</div>
+<footer>Each arrow <b>branches from the same real context</b> &mdash; it is not a continuation, which is
+exactly why the differences between them can only come from the action. <b>Free rollout</b> is the one
+that continues: each generated block becomes the next context, and control is measured to collapse
+after one self-generated block, so it is shown here rather than hidden.
+Arrow keys work too: <kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd></footer>
 <script>
 const DATA=__DATA__, ids=Object.keys(DATA);
 let cur=ids[0], busy=false;
 const c=document.getElementById('c'),x=c.getContext('2d'),st=document.getElementById('status');
 const cache={};
-function img(b64){ if(cache[b64])return cache[b64];
-  const i=new Image(); i.src='data:image/png;base64,'+b64; cache[b64]=i; return i; }
+function img(b){ if(cache[b])return cache[b];
+  const m=b[0]==='j'?'jpeg':'png';
+  const i=new Image(); i.src='data:image/'+m+';base64,'+b.slice(1); cache[b]=i; return i; }
 Object.values(DATA).forEach(e=>{e.context.forEach(img);
-  Object.values(e.anchored).forEach(fr=>fr.forEach(img)); e.chain.forEach(b=>b.frames.forEach(img));});
-function draw(b64){ const i=img(b64); if(i.complete)x.drawImage(i,0,0); else i.onload=()=>x.drawImage(i,0,0); }
+  Object.values(e.anchored).forEach(f=>f.forEach(img)); e.chain.forEach(b=>b.frames.forEach(img));});
+function draw(b){ const i=img(b); if(i.complete)x.drawImage(i,0,0); else i.onload=()=>x.drawImage(i,0,0); }
 function play(frames,done){ let k=0; busy=true;
   (function tick(){ if(k>=frames.length){busy=false; if(done)done(); return;}
     draw(frames[k++]); setTimeout(tick,90); })(); }
 function showCtx(){ play(DATA[cur].context); }
 function act(a){ if(busy)return;
   document.querySelectorAll('.pad button').forEach(b=>b.classList.toggle('on',b.dataset.a===a));
-  st.textContent='action: '+a+' \\u00b7 16 frames \\u00b7 scene '+cur;
-  play(DATA[cur].context.concat(DATA[cur].anchored[a])); }
+  st.innerHTML='action '+a.toUpperCase()+'  \u00b7  16 generated frames  \u00b7  '
+    +'<span class="branch">branch from the same context</span>';
+  play(DATA[cur].anchored[a]); }
 document.querySelectorAll('.pad button').forEach(b=>b.onclick=()=>act(b.dataset.a));
 const sc=document.getElementById('scenes');
 ids.forEach(id=>{const b=document.createElement('button'); b.textContent='scene '+id;
-  b.onclick=()=>{cur=id; st.textContent='scene '+id; showCtx();}; sc.appendChild(b);});
+  b.onclick=()=>{cur=id; document.querySelectorAll('#scenes button').forEach(o=>o.classList.remove('on'));
+    b.classList.add('on'); st.textContent='scene '+id+'  \u00b7  real context'; showCtx();};
+  sc.appendChild(b);});
+sc.firstChild.classList.add('on');
 document.getElementById('chain').onclick=()=>{ if(busy)return;
   const ch=DATA[cur].chain; let i=0;
-  (function nxt(){ if(i>=ch.length){ st.innerHTML='free rollout finished \\u00b7 <span class="warn">quality and control degrade</span>'; return; }
-    const b=ch[i]; st.innerHTML='free rollout \\u00b7 block '+(i+1)+'/'+ch.length+' \\u00b7 '+b.action
-      +(i>0?' \\u00b7 <span class="warn">self-generated context</span>':'');
+  (function nxt(){ if(i>=ch.length){
+      st.innerHTML='free rollout ended  \u00b7  <span class="warn">quality and control degrade</span>'; return; }
+    const b=ch[i];
+    st.innerHTML='free rollout  \u00b7  block '+(i+1)+'/'+ch.length+'  \u00b7  '+b.action.toUpperCase()
+      +(i>0?'  \u00b7  <span class="warn">self-generated context</span>':'');
     i++; play(b.frames,nxt); })(); };
-addEventListener('keydown',e=>{const m={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',' ':'still'};
+addEventListener('keydown',e=>{const m={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',
+  ArrowRight:'right',' ':'still'};
   if(m[e.key]){e.preventDefault();act(m[e.key]);}});
 showCtx();
 </script>"""

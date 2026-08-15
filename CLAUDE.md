@@ -1843,6 +1843,93 @@ Ograničeno na |komponenta| > 0.01 ispada 12/14, ALI to je **naknadno filtriranj
 broj ostaje 15/20. Izabrane akcije su sistematski VEĆE od stvarnih — pogađa smjer, pretjeruje
 u jačini.
 
+## NOC 14/15.08 — SR, demo2, i noćni scheduled sampling trening
+
+### SUPERREZOLUCIJA — tri metode, izmjerene i uporedjene
+
+| metoda | brzina | izgled | fajlovi |
+|---|---|---|---|
+| Lanczos (pošten) | trenutno | mutno, NIŠTA ne dodaje | `logs/upscaled/v2_*_x8.mp4` (512) |
+| Real-ESRGAN x4 (`spandrel`, težine `/tmp/resrgan.pth`) | **34 ms/frejm** | oštro ali VOŠTANO/plastelinasto | `logs/upscaled/BEST_*_x16.mp4` (1024) |
+| difuzioni `sd-x4-upscaler` | **1939 ms/frejm** (50 koraka) | ima teksturu, ali IZMIŠLJA mrežaste/prugaste šare | `logs/upscaled/DIFF_*_x4_then_lanczos.mp4` (768) |
+
+**ESRGAN je 57x brži** — jedan prolaz kroz konvolucionu mrežu naspram 50 prolaza kroz U-Net.
+Ista logika kao naš nalaz o broju koraka: koraci SU cijena.
+
+**Prelet promptova i `noise_level` (20/50/100) NIJE pomogao** — sve četiri varijante praktično
+iste, a `noise_level=100` je unio tačkaste artefakte. Razlog: na 64x64 uslov iz SLIKE dominira,
+tekst nema za šta da se zakači; na visokom noise_level model dodaje ŠUM, ne teksturu.
+`sd-x4-upscaler` je dao svoj maksimum. Nešto bolje traži drugu klasu modela (SUPIR/StableSR,
+SDXL osnova) — **korisnik je odlučio da to NE radimo**.
+
+**Vizuelna poređenja za pregled: `logs/sr_compare/0_SVE_CETIRI_metode.png`** (kolone: 64 sirovo |
+Lanczos | ESRGAN | difuzioni; redovi: tri frejma).
+
+**Pravilo za prezentaciju:** SR nije naš model i ne ulazi ni u jedan broj (PSNR 18.56, VAE plafon
+22.74 dB — sve se odnosi na sirovih 64x64). Uporedni klip
+(`BEST_rollout_lanczos_vs_esrgan.mp4`) je za pokazivanje vredniji od samog uljepšanog.
+
+### DEMO — dvije verzije, obje objavljene kao stranice sa linkom
+
+| | scene | rezolucija | format | veličina | fajl |
+|---|---|---|---|---|---|
+| demo | 4 | 64x64 sirovo | PNG | 7.13 MB | `logs/demo/index.html` |
+| **demo2** | 2 | **256x256 (ESRGAN x4)** | **JPEG 85** | 5.58 MB | `logs/demo2/index.html` |
+
+- PNG na 64x64 je ispravan (nema šta da se izgubi); na 256 bi digao stranicu na ~100 MB, pa JPEG 85.
+- `png_b64()` sada dodaje prefiks `p`/`j` na base64, a `img()` u stranici ga čita — inače bi JPEG
+  bio serviran kao `data:image/png`.
+- U demo2 je isključena `image-rendering:pixelated` (na ESRGAN izlazu pravi stepenaste ivice)
+  i `canvas` je 256.
+- **ESRGAN a ne difuzioni u demou**, jer difuzioni izmišlja teksturu NEZAVISNO po frejmu pa
+  izmišljene šare TITRAJU u animaciji — mnogo uočljivije nego na statičnoj slici.
+- Klik pušta SAMO generisani dio; kontekst jednom. U statusu `branch from the same context`, jer
+  svaki potez je **grana iz iste tačke, NIJE nastavak** (to je i razlog zašto je dokaz kontrole).
+
+**Live server NIJE moguć:** Jupyter je **PID 1** na portu 6006 (gašenje = gašenje kontejnera),
+`jupyter-server-proxy` je instaliran ali traži restart entrypointa. Zaobilazno: Jupyter -> Download.
+`lora_action/web_demo.py` (Flask, `--no_model` za pregled sučelja) postoji za slučaj da se ikad
+otvori port.
+
+### NOĆNI TRENING — scheduled sampling (Danilova ideja), pokrenut 00:34
+
+```
+--p_selfpred 0.5 --selfpred_timestep 500
+--checkpoint_dir /home/mls10/checkpoints/bair_lora_selfpred   <- TREĆI, zaseban
+--rank 16 --batch_size 32 --max_steps 4000 --lr_lora 2e-4 --lr_action 6e-4
+W&B: https://wandb.ai/sm220315d-etf-/bair-action-lora/runs/cl9xcnfl
+```
+
+Dimni test (20 koraka) prošao: loss 0.4965 -> 0.2759, **korak 4.74 s** (procjenjivao sam 6.5).
+Overhead nad našim 3.46 s je +37%, jer je dodatni prolaz JEDAN forward bez gradijenta.
+
+**Val loss, sva tri modela — identični:**
+
+| korak | običan | DMD | selfpred |
+|---|---|---|---|
+| 500 | 0.1483 | 0.1478 | 0.1449 |
+| 1000 | 0.1194 | 0.1199 | 0.1199 |
+
+Bilo je razumno očekivati da val loss PORASTE (pola uzoraka dobija pokvaren kontekst, isti cilj).
+Nije. Ali **ova kriva ne može reći je li eksperiment uspio** — mjeri teacher-forced predviđanje,
+a scheduled sampling cilja ROLLOUT. Isto ograničenje kao kod DMD-a.
+
+**Jutarnji test naoružan** (`scratchpad/morning_test.sh`): čeka `=== DONE ===` u trening logu, pa
+sam pušta MC rollout na `bair_lora_selfpred/step_4000.pt` (256 pokušaja, dubine 1-3, seed 0).
+Trening ~06:20, test ~07:10. **Mora ići SAM na kartici** (21.7 GB).
+
+Poređenje koje čeka:
+
+| dubina | običan | DMD | selfpred |
+|---|---|---|---|
+| 1 | 0.789 (0.735-0.835) | 0.805 (0.752-0.849) | ? |
+| 2 | 0.719 (0.661-0.770) | 0.695 (0.636-0.748) | ? |
+| 3 | 0.742 (0.685-0.792) | 0.781 (0.727-0.828) | ? |
+
+**Ograda koju treba prijaviti:** ovo je APROKSIMACIJA self-forcinga, ne pravi. BAIR klip ima 8
+latent frejmova = tačno 2 bloka, pa NEMA trećeg bloka sa istinom u koji bi se rollout produžio.
+Umjesto kotrljanja naprijed, kontekst kvarimo na način na koji ga model sam kvari.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:
