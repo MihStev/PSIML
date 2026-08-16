@@ -229,6 +229,17 @@ Everything we wrote lives in [`lora_action/`](lora_action/):
 `resolution_diagnostic.py`, `resolution_compare.py`, `overfit_visual_check.py`,
 `real_training_benchmark.py`, `poc_action_injection.py`
 
+Raw output from the two experiments cited most often in this README (the DMD
+comparison, the step-8000 evaluation) is checked in under
+[`lora_action/results/`](lora_action/results/) as JSON, so the exact numbers above are
+traceable back to a run rather than transcribed by hand.
+
+Day-by-day process notes — mentor prep, status reports, the presentation brief, the
+talk-day-5 theory writeup — live under [`docs/`](docs/), kept for provenance but out of
+the way of the code. `CLAUDE.md` stays at the repo root by convention (Claude Code
+auto-loads it as project instructions from there) and is the most complete log of how
+each result was reached, including the dead ends.
+
 ---
 
 ## Reproducing

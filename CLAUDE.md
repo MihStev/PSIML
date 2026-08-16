@@ -2132,6 +2132,47 @@ dvije kartice (flatten-ne-average / AdaLN svaki blok). Slajd 5: samo 99.6% + 4 �
 nema preklapanja), svaka prečka svoja boja, VAE plafon isprekidana linija. Sitni potpisi na
 widget/inverse/limitations slajdovima izbačeni ili skraćeni na ≥30 pt — izlagači ih pričaju.
 
+## DECK POPRAVKE + REPO ČIŠĆENJE (16.08, Mihajlova sesija)
+
+**Deck (`build_presentation_pptx.py`):** OOXML click-to-reveal animacija na
+architecture slajdu izbačena (nije se mogla verifikovati u ovom kontejneru — nema
+PowerPoint/LibreOffice) i zamijenjena **drugim statičnim slajdom** — isti dijagram,
+drugi put sa LoRA/ActionEncoder zaokruženim (`architecture_slide(prs, highlight=...)`,
+pozvan dvaput). Ladder slajd dobio prozirne balončiće (teal/pink, boja poklapa
+barove) sa pill tabom iznad svakog para. Limitations slajd: "still obeys" →
+"control holds", "quality decay" → "video quality decay", i pozadina prebačena sa
+dijagonalnog gradijenta na solid (`new_slide_solid`) — dijagonalni šav je sjekao
+kroz tri kartice. Deck je sad **19 slajdova** (bio 18, arhitektura se sad prikazuje
+dvaput). Commit `c533b2b`, push-ovan na `mine` (MihStev/PSIML fork), NE na `origin`
+(upstream shengshu-ai/minWM — nemamo tamo write pristup, ne dirati taj remote).
+
+**Repo struktura, na korisnikov zahtjev ("ima dosta gluposti, sredi strukturu")** —
+provjereno prvo da nema pravog smeća (nema slučajno komit-ovanih checkpointa/videa,
+`.gitignore` već pokriva `*.pt/*.pth/*.mp4/logs//wandb/` itd., `.git` samo 23MB) —
+problem je bio čisto organizacioni, 5 dnevnih/proces dokumenata je ležalo u root-u
+pomiješano sa `README.md`/`LICENSE`:
+
+```
+PREZENTACIJA_BRIEF.md, pregled_projekta_po_danima.md, priprema_za_mentora.md,
+status_report_day3.md, talk_prep_day5.md   →   docs/
+lora_action/cfg_sweep_results.json,
+lora_action/eval_results_step8000_run.json →   lora_action/results/
+```
+
+`training_hunyuan.md`/`training_wan.md`/`README_upstream_minWM.md` **ostaju u
+root-u** — to je upstream minWM dokumentacija, ne naša, ne premještati. **`CLAUDE.md`
+ostaje u root-u obavezno** — Claude Code ga auto-učitava kao project instructions
+samo odatle, premještanje bi pokvarilo auto-load za svaku buduću sesiju (i za
+Dawidzardov odvojeni klon, `minWM-dawidzard`). Provjereno da ništa u kodu ne čita te
+fajlove po hardkodiranoj putanji (`evaluate.py`/`cfg_test.py` pišu JSON u
+`/home/mls10/logs/`, ne u repo — repo kopije su bile ručno kopirani snapshot-ovi) —
+jedina promjena van git mv-a je jedna docstring linija u
+`build_presentation_pptx.py` (`PREZENTACIJA_BRIEF.md` → `docs/PREZENTACIJA_BRIEF.md`)
+i novi pasus u `README.md` koji pokazuje na `docs/` i `lora_action/results/`.
+
+**Ako radiš iz `minWM-dawidzard` klona:** ti fajlovi su se pomjerili tamo gdje god
+`git pull` povuče ovaj commit — ne traži ih više u root-u.
+
 ## Bitne činjenice o repou (minWM), relevantne za naš pristup
 
 - Wan pipeline je u `Wan21/`, treniranje u `Wan21/scripts/training/`, 4 faze:

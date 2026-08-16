@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Pitch deck builder (python-pptx) -- title + 9 content slides, per PREZENTACIJA_BRIEF.md.
+"""Pitch deck builder (python-pptx) -- title + 9 content slides, per docs/PREZENTACIJA_BRIEF.md.
 
 Visual redesign round (user request, day 5):
   - Times New Roman everywhere, no text below 30 pt (small captions reformulated
