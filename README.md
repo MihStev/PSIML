@@ -244,6 +244,24 @@ each result was reached, including the dead ends.
 
 ## Reproducing
 
+**Setup — two separate environments, do not mix them into one venv:**
+
+```bash
+# PyTorch env: everything except the initial BAIR download/extraction
+python -m venv venvs/pytorch-minwm
+venvs/pytorch-minwm/bin/pip install -r requirements.txt
+
+# TF env: only for extract_bair_windows.py (reads BAIR's TFDS/TFRecord format)
+python3.12 -m venv venvs/tf-bair
+venvs/tf-bair/bin/pip install tensorflow tensorflow-datasets
+```
+
+Also needed: the base `Wan2.1-T2V-1.3B` checkpoint (VAE + text encoder + config) and
+the Stage-1 teacher-forcing checkpoint, both from
+[`MIN-Lab/minWM`](https://huggingface.co/MIN-Lab/minWM) on Hugging Face — see the
+upstream [`README_upstream_minWM.md`](README_upstream_minWM.md) for the exact
+`hf download` invocations and expected `wan_models/` layout.
+
 ```bash
 # 1. data  (~17 min for the VAE encode)
 python lora_action/extract_bair_windows.py --split train --out_dir /tmp/bair_raw/train
